@@ -4,13 +4,9 @@ from keras import backend as K
 from keras.models import Sequential
 import tensorflow as tf
 import numpy as np
-import threading
-import random
-import time
 from Calc import *
 import os
 import copy
-import itertools
 
 clear = lambda: os.system('cls')
 
@@ -25,93 +21,92 @@ for num in range(2, 10):
     suit_value_dict[str(num)] = num
     
 episode = 1
-challenger_score = 0 
-best_score = 0
 final = 0
+eval_episode = 1
+best_fund = 0
+challenger_fund = 0
+first = True
+switch = False
   
 class A3CAgent:
     def __init__(self):
-
-        self.state_size = 33
         self.action_size = 3
-
         self.discount_factor = 0.9
-        self.actor_lr = 0.000002
-        self.critic_lr = 0.000002
-
-        self.threads = 1
-
-        self.actor, self.critic = self.build_actor_model(), self.build_critic_model()
-        self.graph = tf.get_default_graph()
-        
-        self.optimizer = [self.actor_optimizer(), self.critic_optimizer()]
+        self.actor_lr = 0.00001
+        self.critic_lr = 0.00001
         
         self.sess = tf.InteractiveSession()
         K.set_session(self.sess)
         self.sess.run(tf.global_variables_initializer())
-
-        self.summary_placeholders, self.update_ops, self.summary_op = \
-            self.setup_summary()
-        self.summary_writer = \
-            tf.summary.FileWriter('summary/breakout_a3c', self.sess.graph)
         
-        #self.load_model("./save_model/Challenger")
+        self.training_states, self.training_actions, self.training_rewards = [], [], []
+        
+        self.best_actor, self.best_critic = self.build_actor_model(), self.build_critic_model()
+        
+        self.challenger_actor, self.challenger_critic = self.build_actor_model(), self.build_critic_model()
+        
+        self.optimizer = [self.bulid_actor_optimizer(), self.bulid_critic_optimizer()]
+        
+        #self.load_model('challenger')
+        #self.load_model('best')
     
     def train(self):
-        agents = [Agent(self.action_size, self.state_size,
-                        [self.actor, self.critic], self.sess,
-                        self.optimizer, self.discount_factor,
-                        [self.summary_op, self.summary_placeholders,
-                         self.update_ops, self.summary_writer])
-                  for _ in range(self.threads)]
+        global episode 
+        global final
+        global eval_episode
+        global best_fund
+        global challenger_fund
         
-        for agent in agents:
-            time.sleep(1)
-            agent.start()
-
-        #while True:
-        #    if episode%2:
-        #        self.save_model("./save_model/Poker")
+        time.sleep(5)
+        while final < 10:
+            self.save_model("best")
+            self.table(False)
+            print('eval')
+            eval_episode = 1
+            self.table(True)
+            
+            if challenger_fund >= 20000:
+                print('update')
+                self.update_model()
+                final = 0
+            else:
+                final += 1
+                
+            challenger_fund, best_fund = 0, 0
+            first = False
 
     def build_actor_model(self):
         actor = Sequential()
-        actor.add(Dense(64, input_dim=self.state_size, activation='relu', kernel_initializer='he_uniform'))
-        actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        actor.add(Dense(self.action_size, activation='softmax', kernel_initializer='he_uniform'))
         
-        actor._make_predict_function()
+        actor.add(Dense(254, input_dim=254, activation='selu', kernel_initializer='lecun_normal'))
+        for _ in range(20):
+            actor.add(Dense(350, activation='selu', kernel_initializer='lecun_normal'))
+        
+        actor.add(Dense(3, activation='softmax', kernel_initializer='lecun_normal'))
+        
         actor.summary()
 
         return actor
     
     def build_critic_model(self):
         critic = Sequential()
-        critic.add(Dense(64, input_dim=self.state_size, activation='relu', kernel_initializer='he_uniform'))
-        critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        critic.add(Dense(1, activation='linear', kernel_initializer='he_uniform'))
         
-        critic._make_predict_function()
+        critic.add(Dense(254, input_dim=254, activation='selu', kernel_initializer='lecun_normal'))
+        for _ in range(20):
+            critic.add(Dense(350, activation='selu', kernel_initializer='lecun_normal'))
+        
+        critic.add(Dense(1, activation='linear', kernel_initializer='lecun_normal'))
+        
         critic.summary()
 
         return critic
-
-    def actor_optimizer(self):
+    
+    def bulid_actor_optimizer(self):
         action = K.placeholder(shape=[None, self.action_size])
         advantages = K.placeholder(shape=[None, ])
 
-        policy = self.actor.output
+        
+        policy = self.challenger_actor.output
         
         action_prob = K.sum(action * policy, axis=1)
         cross_entropy = K.log(action_prob + 1e-10) * advantages
@@ -123,108 +118,35 @@ class A3CAgent:
         
         loss = cross_entropy + 0.01 * entropy
 
-        optimizer = RMSprop(lr=self.actor_lr, rho=0.99, epsilon=0.01)
-        updates = optimizer.get_updates(self.actor.trainable_weights, [],loss)
-        train = K.function([self.actor.input, action, advantages], [loss], updates=updates)
+        optimizer = Adam(lr=self.actor_lr)
+        updates = optimizer.get_updates(self.challenger_actor.trainable_weights, [],loss)
+        train = K.function([self.challenger_actor.input, action, advantages], [loss], updates=updates)
         return train
-
     
-    def critic_optimizer(self):
+    def bulid_critic_optimizer(self):
         discounted_prediction = K.placeholder(shape=(None,))
-
-        value = self.critic.output
+        
+        value = self.challenger_critic.output
         
         loss = K.mean(K.square(discounted_prediction - value))
 
-        optimizer = RMSprop(lr=self.critic_lr, rho=0.99, epsilon=0.01)
-        updates = optimizer.get_updates(self.critic.trainable_weights, [],loss)
-        train = K.function([self.critic.input, discounted_prediction], [loss], updates=updates)
+        optimizer = Adam(lr=self.critic_lr)
+        
+        updates = optimizer.get_updates(self.challenger_critic.trainable_weights, [],loss)
+        train = K.function([self.challenger_critic.input, discounted_prediction], [loss], updates=updates)
+            
         return train
-        
 
     def load_model(self, name):
-        self.actor.load_weights(name + "_actor")
-        self.critic.load_weights(name + "_critic")
+        self.challenger_actor.load_weights(name + "_actor.h5")
+        self.challenger_critic.load_weights(name + "_critic.h5")
 
     def save_model(self, name):
-        self.actor.save_weights(name + "_actor")
-        self.critic.save_weights(name + "_critic")
-
-    
-    def setup_summary(self):
-        episode_avg_max_q = tf.Variable(0.)
-        total_ai1_reward = tf.Variable(0.)
-        total_ai2_reward = tf.Variable(0.)
-        episode_ai1_reward = tf.Variable(0.)
-        episode_ai2_reward = tf.Variable(0.)
-
-        tf.summary.scalar('Average Max Prob/Episode', episode_avg_max_q)
-        tf.summary.scalar('Total ai1 Rward/Episode', total_ai1_reward)
-        tf.summary.scalar('Total ai2 Rward/Episode', total_ai2_reward)
-        tf.summary.scalar('ai1 Rward/Episode', episode_ai1_reward)
-        tf.summary.scalar('ai2 Rward/Episode', episode_ai2_reward)
-
-        summary_vars = [episode_avg_max_q, total_ai1_reward, total_ai2_reward, episode_ai1_reward, episode_ai2_reward]
-
-        summary_placeholders = [tf.placeholder(tf.float32)
-                                for _ in range(len(summary_vars))]
-        update_ops = [summary_vars[i].assign(summary_placeholders[i])
-                      for i in range(len(summary_vars))]
-        summary_op = tf.summary.merge_all()
-        return summary_placeholders, update_ops, summary_op
-
-class Agent(threading.Thread):
-
-    def __init__(self, action_size, state_size, model, sess,
-                 optimizer, discount_factor, summary_ops):
-        threading.Thread.__init__(self)
+        self.challenger_actor.save_weights(str(name) + "_actor.h5")
+        self.challenger_critic.save_weights(str(name) + "_critic.h5")
         
-        self.action_size = action_size
-        self.state_size = state_size
-        self.actor, self.critic = model
-        self.graph = tf.get_default_graph()
-        self.sess = sess
-        self.optimizer = optimizer
-        self.discount_factor = discount_factor
-        [self.summary_op, self.summary_placeholders,self.update_ops, self.summary_writer] = summary_ops
-        
-        self.ai1_states, self.ai1_actions, self.ai1_rewards = [], [], []
-        self.ai2_states, self.ai2_actions, self.ai2_rewards = [], [], []
-        
-        self.local_actor, self.local_critic = self.build_local_actor_model(), self.build_local_critic_model()
-     
-        
-        #self.load_model("./save_model/Best")
-    
-    def load_model(self, name):
-        self.local_actor.load_weights(name + "_actor")
-        self.local_critic.load_weights(name + "_critic")
-
-    def save_model(self, name):
-        self.local_actor.save_weights(name + "_actor")
-        self.local_critic.save_weights(name + "_critic")
-
-    def run(self):
-        global episode 
-        global challenger_score 
-        global best_score 
-        global final
-        
-        while final < 100:
-            self.table(False)
-            
-            if episode%1000 == 0:
-                self.table(True)
-                
-            if challenger_score >= 550:
-                self.update_local_model()
-                final = 0
-            else:
-                final += 1
-                
-            challenger_score, best_score = 0
-            
     def discounted_prediction(self, rewards):
+        global switch
         discounted_prediction = np.zeros_like(rewards, dtype=float)
         
         running_add = 0
@@ -233,239 +155,174 @@ class Agent(threading.Thread):
             running_add = running_add * self.discount_factor + rewards[t]
             discounted_prediction[t] = running_add
             
+        #if switch == True:
+        #    discounted_prediction[len(rewards)-1] = rewards[len(rewards)-1] * 2
+            
+            
         return discounted_prediction
-
-    def train_model(self):
-        discounted_prediction = self.discounted_prediction(self.ai1_rewards)
-
-        ai1_states = np.zeros((len(self.ai1_states), 33))
-        for i in range(len(self.ai1_states)):
-            ai1_states[i] = self.ai1_states[i]
         
-        with self.graph.as_default():
-            values = self.critic.predict(ai1_states)
+    def train_model(self):
+        discounted_prediction = self.discounted_prediction(self.training_rewards)
+        
+        training_states = np.zeros((len(self.training_states), 254))
+        for i in range(len(self.training_states)):
+            training_states[i] = self.training_states[i]
+            
+        values = self.challenger_critic.predict(training_states)
         
         values = np.reshape(values, len(values))
-
         advantages = discounted_prediction - values
-        
-        self.optimizer[0]([ai1_states, self.ai1_actions, advantages])
-        self.optimizer[1]([ai1_states, discounted_prediction])
-        self.ai1_states, self.ai1_actions, self.ai1_rewards = [], [], []
-    
-    def build_local_actor_model(self):
-        '''
-        input = Input(shape=self.state_size)
-        dnn = Dense(64, activation='relu', kernel_initializer='zero')(input)
-        dnn = Dense(64, activation='relu', kernel_initializer='zero')(dnn)
-        dnn = Dense(64, activation='relu', kernel_initializer='zero')(dnn)
-        dnn = Dense(64, activation='relu', kernel_initializer='zero')(dnn)
-        dnn = Dense(64, activation='relu', kernel_initializer='zero')(dnn)
-        dnn = Dense(64, activation='relu', kernel_initializer='zero')(dnn)
-        dnn = Dense(64, activation='relu', kernel_initializer='zero')(dnn)
-        dnn = Dense(64, activation='relu', kernel_initializer='zero')(dnn)
-        dnn = Dense(64, activation='relu', kernel_initializer='zero')(dnn)
 
-        policy = Dense(self.action_size, activation='softmax', kernel_initializer='zero')(dnn)
-        value = Dense(1, activation='linear', kernel_initializer='zero')(dnn)
-
-        local_actor = Model(inputs=input, outputs=policy)
-        local_critic = Model(inputs=input, outputs=value)
-        
-        local_actor = Sequential()
-        local_actor.add(Dense(64, input_dim=self.state_size, activation='relu', kernel_initializer='zero'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_actor.add(Dense(self.action_size, activation='softmax', kernel_initializer='zero'))
-        
-        local_critic = Sequential()
-        local_critic.add(Dense(64, input_dim=self.state_size, activation='relu', kernel_initializer='zero'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='zero'))
-        local_critic.add(Dense(1, activation='linear', kernel_initializer='zero'))
-
-        local_actor._make_predict_function()
-        local_critic._make_predict_function()
-
-        local_actor.set_weights(self.actor.get_weights())
-        local_critic.set_weights(self.critic.get_weights())
-
-        local_actor.summary()
-        local_critic.summary()
-
-        return local_actor, local_critic
-        '''
-        local_actor = Sequential()
-        local_actor.add(Dense(64, input_dim=self.state_size, activation='relu', kernel_initializer='he_uniform'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_actor.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_actor.add(Dense(self.action_size, activation='softmax', kernel_initializer='he_uniform'))
-
-        local_actor._make_predict_function()
-        local_actor.summary()
-
-        return local_actor
-    
-    def build_local_critic_model(self):
-        local_critic = Sequential()
-        local_critic.add(Dense(64, input_dim=self.state_size, activation='relu', kernel_initializer='he_uniform'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_critic.add(Dense(64, activation='relu', kernel_initializer='he_uniform'))
-        local_critic.add(Dense(1, activation='linear', kernel_initializer='he_uniform'))
-
-        local_critic._make_predict_function()
-        local_critic.summary()
-
-        return local_critic
-    
-    def update_local_model(self):
-        self.local_actor.set_weights(self.actor.get_weights())
-        self.local_critic.set_weights(self.critic.get_weights())
-    '''
-    def ai1_get_action(self, history):
-        with self.graph.as_default():
-            policy = self.local_actor.predict(history)[0]
+        self.optimizer[0]([training_states, self.training_actions, advantages])
+        self.optimizer[1]([training_states, discounted_prediction])
             
-        return np.random.choice(self.action_size, 1, p=[0.5, 0.5, 0])[0]
     
-    def ai2_get_action(self, history):
-        with self.graph.as_default():
-            policy = self.local_actor.predict(history)[0]
-            
-        return np.random.choice(self.action_size, 1, p=[0.5, 0.5, 0])[0]
-    '''   
-    def ai1_append_sample(self, history, action, reward):
-        state = copy.deepcopy(history)
-        self.ai1_states.append(state)
+    def update_model(self):
+        self.best_actor.set_weights(self.challenger_actor.get_weights())
+        self.best_critic.set_weights(self.challenger_critic.get_weights())
+        
+    def append_sample(self, card_state, betting_state, action, reward):
+        state1 = copy.deepcopy(card_state)
+        state2 = copy.deepcopy(betting_state)
+        state = np.append(state1, state2)
+        state = np.reshape(state, [1, 254])
+        #state = np.reshape(card_state, [1, 208])
+        self.training_states.append(state)
         act = np.zeros(self.action_size)
         act[action] = 1
-        self.ai1_actions.append(act)
-        self.ai1_rewards.append(reward)
+        self.training_actions.append(act)
+        self.training_rewards.append(reward)
         
-    def choice(self, state, dict, ai1_hands, ai1_board, ai2_board, hidden, eval):
+    def choice(self, card_state, betting_state, dict, ai1_hands, ai1_board, ai2_board, hidden, eval, id):
         calc_deck = []
-        result = [0, 0, 0]
+        result = np.zeros(3)
         number = 0
         md = [0, 1, 2]
+        
+        state = np.append(card_state, betting_state)
+        state = np.reshape(state, [1, 254])
+        #state = np.reshape(card_state, [1, 208])
+        
         
         generate_deck(calc_deck)
         #print("start!")
         
-        for i in ai1_hands + ai1_board + ai2_board:
-            calc_deck.remove(i)
-            
-        for i in list(itertools.combinations(calc_deck, 2)):
-            case = []
-            for j in i:
-                case.append(dict[str(j)])
-            
-            case.sort()
+        if eval == False:
+            policy = self.best_actor.predict(state)[0]
+            #print(state)
+            if id == 1:
+                print(policy)
+            if first == True:
+                return np.random.choice(self.action_size, 1, p=policy)[0]
+            elif first == False:
+                return np.random.choice(self.action_size, 1, p=policy)[0]
         
-            state[0, 17] = case[0]
-            state[0, 18] = case[1]
-            
-            if hidden == 0:
-                with self.graph.as_default():
-                    if eval == False:
-                        result += self.local_actor.predict(state)[0]
-                    elif eval == True:
-                        result += self.actor.predict(state)[0]
-                number += 1
+        elif eval == True:
+            for i in ai1_hands + ai1_board + ai2_board:
+                calc_deck.remove(i)
                 
-            elif hidden == 1:
-                for hid in range(10, 62):
-                    if hid == case[0] or hid == case[1]:
-                        continue
-                    state[0, 23] = hid
-                    with self.graph.as_default():
-                        if eval == False:
-                            result += self.local_actor.predict(state)[0]
-                        elif eval == True:
-                            result += self.actor.predict(state)[0]
+            for i in list(itertools.combinations(calc_deck, 2)):
+                case = []
+                for j in i:
+                    case.append(dict[str(j)])
+            
+                state[0, 104 + case[0]] = 1
+                state[0, 104 + case[0]] = 1
+                
+                if hidden == 0:
+                    if id == 1:
+                        result += self.best_actor.predict(state)[0]
+                    elif id == 2:
+                        result += self.challenger_actor.predict(state)[0]
                     number += 1
-        
-        for i in range(3):
-            result[i] /= number
-        mx = np.where(result == max(result))
-        mn = np.where(result == min(result))
-        if result[mx] == 1:
-            #print("er!")
-            return mx[0][0]
-        md.remove(mx[0])
-        md.remove(mn[0])
-        #print(md)
-        #print("end!")
-        if result[mx[0][0]] - result[md[0]] >= 0.2:
-            return mx[0][0]
-        #elif result[mx] - result[md[0]] < 0.2:
-        #    return emotion
-        else:
-            return np.random.choice(self.action_size, 1, p=result)[0]
+                    state[0, 104 + case[0]] = 0
+                    state[0, 104 + case[0]] = 0
+                    
+                elif hidden == 1:
+                    for k in calc_deck:
+                        hid = dict[str(k)]
+                        if hid == case[0] or hid == case[1]:
+                            continue
+                        
+                        state[0, 104 + hid] = 1
+                        
+                        if id == 1:
+                            result += self.best_actor.predict(state)[0]
+                        elif id == 2:
+                            result += self.challenger_actor.predict(state)[0]
+                        number += 1
+                        state[0, 104 + hid] = 0
+                
+            for i in range(3):
+                result[i] /= number
+            result /= result.sum()
+            
+            print(card_state)
+            print(betting_state)
+            print(result)
+            print(' ')
+            
+            mx = np.where(result == max(result))
+            mn = np.where(result == min(result))
+            if result[mx] == 1:
+                #print("er!")
+                return mx[0][0]
+            md.remove(mx[0])
+            md.remove(mn[0])
+            #print(md)
+            #print("end!")
+            
+            
+            if result[mx[0][0]] - result[md[0]] >= 0.2:
+                return mx[0][0]
+            #elif result[mx] - result[md[0]] < 0.2:
+            #    return emotion
+            else:
+                return np.random.choice(self.action_size, 1, p=result)[0]
         
     def reward(self, table_stake):
         reward = table_stake
         if reward <= 4000:
             return 1
         elif reward <= 8000:
-            return 1.1
+            return 1.01
         elif reward <= 16000:
-            return 1.2
-        elif reward <= 33000:
-            return 1.3
+            return 1.02
+        elif reward <= 32000:
+            return 1.03
         elif reward <= 64000:
-            return 1.4
+            return 1.04
         elif reward <= 128000:
-            return 1.5
+            return 1.06
         elif reward <= 256000:
-            return 1.6
+            return 1.07
         elif reward <= 512800:
-            return 1.7
+            return 1.08
         elif reward <= 1024000:
-            return 1.8
+            return 1.09
         else:
-            return 1.9
-        
+            return 1.1
+    
     def table(self, eval):
         global episode 
-        global challenger_score 
-        global best_score 
+        global eval_episode
         global final
-        local_episode = 1
-        ai1_fund = 10000000
-        ai2_fund = 10000000
+        global best_fund
+        global challenger_fund
+        global switch
+        
+        best_fund = 0
+        challenger_fund = 0
         
         while True:
-            print(episode , challenger_score ,best_score ,final)
+            print(episode, eval_episode, best_fund, challenger_fund, final)
+            self.training_states, self.training_actions, self.training_rewards = [], [], []
             deck = []
-            ai1_temp1 = []
-            ai2_temp1 = []
-            ai1_temp2= []
-            ai2_temp2 = []
-            ai1_temp3 = []
-            ai2_temp3 = []
             dict = {}
-            j = 0
-            h = 0
-            l = 10
+            l = 0
+            r = 5
+            e = 5
+            switch = False
             
             generate_deck(deck)
             
@@ -483,244 +340,237 @@ class Agent(threading.Thread):
             
             #seed money
             table_stake = 2000
-            ai1_fund -= 1000
-            ai2_fund -= 1000
+            best_fund -= 1000
+            challenger_fund -= 1000
             
             stake = 0
             winner = 0
                     
-            ai1_state = np.zeros(33)
-            ai2_state = np.zeros(33)
+            ai1_card_state = np.zeros(208)
+            ai2_card_state = np.zeros(208)
             
-            ai1_state = np.reshape(ai1_state, [1, 33])
-            ai2_state = np.reshape(ai2_state, [1, 33])
+            ai1_betting_state = np.zeros(46)
+            ai2_betting_state = np.zeros(46)
             
-            while winner == 0 :
+            ai1_card_state = np.reshape(ai1_card_state, [4, 52])
+            ai2_card_state = np.reshape(ai2_card_state, [4, 52])
+            
+            ai1_betting_state = np.reshape(ai1_betting_state, [2, 23])
+            ai2_betting_state = np.reshape(ai2_betting_state, [2, 23])
+            
+            while True :
                 #turn1
-                for i in range(3):
+                for _ in range(3):
                     ai1_hands.append(deck.pop())
                     ai2_hands.append(deck.pop())
                 
                 for i in ai1_hands:
-                    ai1_temp1.append(dict[str(i)])
-                for i in ai2_hands:
-                    ai2_temp1.append(dict[str(i)])
+                    ai1_card_state[0, dict[str(i)]] = 1
+                    ai2_card_state[2, dict[str(i)]] = 1
                     
-                ai1_temp1.sort()
-                ai2_temp1.sort()
+                for i in ai2_hands:
+                    ai2_card_state[0, dict[str(i)]] = 1
+                    ai1_card_state[2, dict[str(i)]] = 1
                 
-                for i in range(3):
-                    ai1_state[0, j] = ai1_temp1[i]
-                    j += 1
-                for i in range(3):
-                    ai2_state[0, h] = ai2_temp1[i]
-                    h += 1
+                ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 0, eval, 1)
+                ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval, 2)
+                self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
                 
-                ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 0, False)
-                ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval)
-                self.ai1_append_sample(ai1_state, ai1_action, 0)
+                ai1_board.append(ai1_hands.pop(ai1_action))
+                ai2_board.append(ai2_hands.pop(ai2_action))
                 
-                temp1 = ai1_hands.pop(ai1_action)
-                temp2 = ai2_hands.pop(ai2_action)
-            
+                for i in ai1_board:
+                    ai1_card_state[0, dict[str(i)]] = 0
+                    ai2_card_state[2, dict[str(i)]] = 0
+                    
+                for i in ai2_board:
+                    ai2_card_state[0, dict[str(i)]] = 0
+                    ai1_card_state[2, dict[str(i)]] = 0
+                
                 for i in ai1_hands:
-                    ai1_temp2.append(dict[str(i)])
-                for i in ai2_hands:
-                    ai2_temp2.append(dict[str(i)])
+                    ai1_card_state[0, dict[str(i)]] = 1
+                    ai2_card_state[2, dict[str(i)]] = 1
                     
-                ai1_temp2.sort()
-                ai2_temp2.sort()
+                for i in ai2_hands:
+                    ai2_card_state[0, dict[str(i)]] = 1
+                    ai1_card_state[2, dict[str(i)]] = 1
                 
-                ai1_state[0, 17] = ai2_temp2[0]
-                ai1_state[0, 18] = ai2_temp2[1]
-                ai2_state[0, 17] = ai1_temp2[0]
-                ai2_state[0, 18] = ai1_temp2[1]
+                print('turn2')
                 
                 #turn2
                 for _ in range(2):
                     ai1_board.append(deck.pop())
                     ai2_board.append(deck.pop())
                 
-                ai1_temp3.append(dict[str(ai1_board[0])])
-                ai1_temp3.append(dict[str(ai1_board[1])]) 
-                ai2_temp3.append(dict[str(ai2_board[0])])
-                ai2_temp3.append(dict[str(ai2_board[1])]) 
-                  
-                ai1_temp3.sort()
-                ai2_temp3.sort()
+                for i in ai1_board:
+                    ai1_card_state[1, dict[str(i)]] = 1
+                    ai2_card_state[3, dict[str(i)]] = 1
                 
-                ai1_state[0, 4] = ai1_temp3[0]
-                ai1_state[0, 5] = ai1_temp3[1]
-                ai1_state[0, 20] = ai2_temp3[0]
-                ai1_state[0, 21] = ai2_temp3[1]
+                for i in ai2_board:
+                    ai2_card_state[1, dict[str(i)]] = 1
+                    ai1_card_state[3, dict[str(i)]] = 1
                 
-                ai2_state[0, 4] = ai2_temp3[0]
-                ai2_state[0, 5] = ai2_temp3[1]
-                ai2_state[0, 20] = ai1_temp3[0]
-                ai2_state[0, 21] = ai1_temp3[1]
-                
-                ai1_board.append(temp1)
-                ai2_board.append(temp2)
-                
-                ai1_state[0, 3] = dict[str(ai1_board[2])]
-                ai1_state[0, 19] = dict[str(ai2_board[2])]
-                
-                ai2_state[0, 3] = dict[str(ai2_board[2])]
-                ai2_state[0, 19] = dict[str(ai1_board[2])]
-                
-                j += 3
-                h += 3
-                    
                 if(check_turn(ai1_board, ai2_board) == 1):
-                    ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 0, False)
+                    ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 0, eval, 1)
                     #print(ai1_action)
-                    self.ai1_append_sample(ai1_state, ai1_action, 0)
+                    self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
                     if(ai1_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
+                        self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
                         winner = 2
                         break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet1(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                    stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund = bet1(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund)
                     
                     
-                    ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval)
+                    ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval, 2)
                     if(ai2_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
+                        self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
                         winner = 1
                         break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet1(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                    stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund= bet1(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund)
                     
                     
                     if(ai2_action == 1):
-                        ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 0, False)
-                        self.ai1_append_sample(ai1_state, ai1_action, 0)
+                        ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 0, eval, 1)
+                        if ai1_action == 1:
+                            ai1_action = 0
+                        self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
                         if(ai1_action == 2):
-                            self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
+                            self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
                             winner = 2
                             break
-                        ai1_action = 0
-                        stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet1(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                        stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund = bet1(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund)
                         
                         
                 elif(check_turn(ai1_board, ai2_board) == 2):
-                    ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval)
+                    ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval, 2)
                     if(ai2_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
+                        self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
                         winner = 1
                         break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet1(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                    stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund= bet1(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund)
                     
                     
-                    ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 0, False)
-                    self.ai1_append_sample(ai1_state, ai1_action, 0)
+                    ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 0, eval, 1)
+                    self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
                     if(ai1_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
+                        self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
                         winner = 2
                         break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet1(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                    stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund = bet1(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund)
                     
                     
                     if(ai1_action == 1):
-                        ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval)
+                        ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval, 2)
                         if(ai2_action == 2):
-                            self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
+                            self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
                             winner = 1
                             break
                         ai2_action = 0
-                        stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet1(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                        stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund= bet1(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund)
                         
                 else:
                     print("errrrrrrrrrrrrrrrrrrrrrrrrrrrror1")
                     print(check_turn(ai1_board, ai2_board))
                     break
-                       
+                
+                print('turn3')
                 #turn3
                 stake = 0
                 
-                ai1_board.append(deck.pop())
-                ai2_board.append(deck.pop())    
+                ai1_temp = deck.pop()
+                ai2_temp = deck.pop()
                 
-                ai1_state[0, j] = dict[str(ai1_board[3])]
-                ai2_state[0, j + 16] = dict[str(ai1_board[3])]
-                j += 1 
+                ai1_board.append(ai1_temp)
+                ai2_board.append(ai2_temp)
                 
-                ai2_state[0, h] = dict[str(ai2_board[3])]
-                ai1_state[0, h + 16] = dict[str(ai2_board[3])]
-                h += 1 
+                ai1_card_state[1, dict[str(ai1_temp)]] = 1
+                ai2_card_state[3, dict[str(ai1_temp)]] = 1
+                
+                ai2_card_state[1, dict[str(ai2_temp)]] = 1
+                ai1_card_state[3, dict[str(ai2_temp)]] = 1
                 
                 if(check_turn(ai1_board, ai2_board) == 1):
-                    ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 0, False)
-                    self.ai1_append_sample(ai1_state, ai1_action, 0)
+                    ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 0, eval, 1)
+                    self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
                     if(ai1_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
+                        self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
                         winner = 2
                         break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet2(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                    stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r = bet2(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r)
                     
                     
-                    ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval)
+                    ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval, 2)
                     if(ai2_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
+                        self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
                         winner = 1
                         break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet2(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                    stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e = bet2(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e)
                     
                     if(ai2_action == 1):
                         while(True):
-                            ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 0, False)
-                            self.ai1_append_sample(ai1_state, ai1_action, 0)
+                            ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 0, eval, 1)
+                            if(table_stake>1000000 and ai1_action == 1):
+                                ai1_action = 0
+                            self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
                             if(ai1_action == 2):
-                                self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
+                                self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
                                 winner = 2
                                 break
-                            stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet2(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                            stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r = bet2(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r)
                             if(ai1_action == 0):
                                 break
                             
-                            ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval)
+                            ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval, 2)
+                            if(table_stake>1000000 and ai2_action == 1):
+                                ai2_action = 0
                             if(ai2_action == 2):
-                                self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
+                                self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
                                 winner = 1
                                 break
-                            stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet2(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                            stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e = bet2(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e)
                             if(ai2_action == 0):
                                 break
                         
                 
                 elif(check_turn(ai1_board, ai2_board) == 2):
-                    ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval)
+                    ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval, 2)
                     if(ai2_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
+                        self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
                         winner = 1
                         break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet2(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                    stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e = bet2(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e)
                     
                     
-                    ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 0, False)
-                    self.ai1_append_sample(ai1_state, ai1_action, 0)
+                    ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 0, eval, 1)
+                    self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
                     if(ai1_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
+                        self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
                         winner = 2
                         break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet2(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                    stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r = bet2(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r)
                     
                     if(ai1_action == 1):
                         while(True):
-                            ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval)
+                            ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 0, eval, 2)
+                            if(table_stake>1000000 and ai2_action == 1):
+                                ai2_action = 0
                             if(ai2_action == 2):
-                                self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
+                                self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
                                 winner = 1
                                 break
-                            stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet2(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                            stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e = bet2(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e)
                             if(ai2_action == 0):
                                 break
                             
-                            ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 0, False)
-                            self.ai1_append_sample(ai1_state, ai1_action, 0)
+                            ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 0, eval, 1)
+                            if(table_stake>1000000 and ai1_action == 1):
+                                ai1_action = 0
+                            self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
                             if(ai1_action == 2):
-                                self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
+                                self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
                                 winner = 2
                                 break
-                            stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet2(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
+                            stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r = bet2(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r)
                             if(ai1_action == 0):
                                 break
                         
@@ -731,182 +581,162 @@ class Agent(threading.Thread):
                     
                 if(winner != 0):
                     break
-                       
+                
+                print('final')
                 #final
                 stake = 0
-            
-                ai1_hands.append(deck.pop())
-                ai2_hands.append(deck.pop())    
+                r = 15
+                e = 15
                 
-                ai1_state[0, j] = dict[str(ai1_hands[2])]
-                ai2_state[0, j + 16] = dict[str(ai1_hands[2])]
-                j += 1 
-            
-                ai2_state[0, h] = dict[str(ai2_hands[2])]
-                ai1_state[0, h + 16] = dict[str(ai2_hands[2])]
-                h += 1
+                ai1_temp = deck.pop()
+                ai2_temp = deck.pop()
                 
-                if(check_turn(ai1_board, ai2_board) == 1):
-                    ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 1, False)
-                    self.ai1_append_sample(ai1_state, ai1_action, 0)
-                    if(ai1_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
-                        winner = 2
-                        break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet3(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
-                    
-                    
-                    ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 1, eval)
-                    if(ai2_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
-                        winner = 1
-                        break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet3(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
-                    
-                    
-                    if(ai2_action == 1):
-                        while(True):
-                            ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 1, False)
-                            self.ai1_append_sample(ai1_state, ai1_action, 0)
-                            if(ai1_action == 2):
-                                self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
-                                winner = 2
-                                break
-                            stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet2(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
-                            if(ai1_action == 0):
-                                break
-                            
-                            ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 1, eval)
-                            if(ai2_action == 2):
-                                self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
-                                winner = 1
-                                break
-                            stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet2(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
-                            if(ai2_action == 0):
-                                break
+                ai1_hands.append(ai1_temp)
+                ai2_hands.append(ai2_temp)
+                
+                ai1_card_state[0, dict[str(ai1_temp)]] = 1
+                ai2_card_state[2, dict[str(ai1_temp)]] = 1
+                
+                ai2_card_state[0, dict[str(ai2_temp)]] = 1
+                ai1_card_state[2, dict[str(ai2_temp)]] = 1
+                
+                if(table_stake < 1000000):
+                    if(check_turn(ai1_board, ai2_board) == 1):
+                        ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 1, eval, 1)
+                        self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
+                        if(ai1_action == 2):
+                            self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
+                            winner = 2
+                            break
+                        stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r = bet3(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r)
                         
-                
-                elif(check_turn(ai1_board, ai2_board) == 2):
-                    ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 1, eval)
-                    if(ai2_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
-                        winner = 1
-                        break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet3(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
-                    
-                    
-                    ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 1, False)
-                    self.ai1_append_sample(ai1_state, ai1_action, 0)
-                    if(ai1_action == 2):
-                        self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
-                        winner = 2
-                        break
-                    stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet3(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
-                    
-                    
-                    if(ai1_action == 1):
-                        while(True):
-                            ai2_action = self.choice(ai2_state, dict, ai2_hands, ai2_board, ai1_board, 1, eval)
-                            if(ai2_action == 2):
-                                self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)
-                                winner = 1
-                                break
-                            stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet3(ai2_action, stake, table_stake, 2, ai1_state, ai2_state, ai1_fund, ai2_fund)
-                            if(ai2_action == 0):
-                                break
-                            
-                            ai1_action = self.choice(ai1_state, dict, ai1_hands, ai1_board, ai2_board, 1, False)
-                            self.ai1_append_sample(ai1_state, ai1_action, 0)
-                            if(ai1_action == 2):
-                                self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
-                                winner = 2
-                                break
-                            stake, table_stake, ai1_state, ai2_state, ai1_fund, ai2_fund = bet3(ai1_action, stake, table_stake, 1, ai1_state, ai2_state, ai1_fund, ai2_fund)
-                            if(ai1_action == 0):
-                                break
                         
-                else:
-                    print("errrrrrrrrrrrrrrrrrrrrrrrrrrrror3")
-                    print(check_turn(ai1_board, ai2_board))
-                    break
+                        ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 1, eval, 2)
+                        if(ai2_action == 2):
+                            self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
+                            winner = 1
+                            break
+                        stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e = bet3(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e)
+                        
+                        
+                        if(ai2_action == 1):
+                            while(True):
+                                ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 1, eval, 1)
+                                if(table_stake>1000000 and ai1_action == 1):
+                                    ai1_action = 0
+                                self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
+                                if(ai1_action == 2):
+                                    self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
+                                    winner = 2
+                                    break
+                                stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r = bet3(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r)
+                                if(ai1_action == 0):
+                                    break
+                                
+                                ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 1, eval, 2)
+                                if(table_stake>1000000 and ai2_action == 1):
+                                    ai2_action = 0
+                                if(ai2_action == 2):
+                                    self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
+                                    winner = 1
+                                    break
+                                stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e = bet3(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e)
+                                if(ai2_action == 0):
+                                    break
+                            
+                    
+                    elif(check_turn(ai1_board, ai2_board) == 2):
+                        ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 1, eval, 2)
+                        if(ai2_action == 2):
+                            self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
+                            winner = 1
+                            break
+                        stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e = bet3(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e)
+                        
+                        
+                        ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 1, eval, 1)
+                        self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
+                        if(ai1_action == 2):
+                            self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
+                            winner = 2
+                            break
+                        stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r = bet3(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r)
+                        
+                        
+                        if(ai1_action == 1):
+                            while(True):
+                                ai2_action = self.choice(ai2_card_state, ai2_betting_state, dict, ai2_hands, ai2_board, ai1_board, 1, eval, 2)
+                                if(table_stake>1000000 and ai2_action == 1):
+                                    ai2_action = 0
+                                if(ai2_action == 2):
+                                    self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)
+                                    winner = 1
+                                    break
+                                stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e = bet3(ai2_action, stake, table_stake, 2, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, e)
+                                if(ai2_action == 0):
+                                    break
+                                
+                                ai1_action = self.choice(ai1_card_state, ai1_betting_state, dict, ai1_hands, ai1_board, ai2_board, 1, eval, 1)
+                                if(table_stake>1000000 and ai1_action == 1):
+                                    ai1_action = 0
+                                self.append_sample(ai1_card_state, ai1_betting_state, ai1_action, 0)
+                                if(ai1_action == 2):
+                                    self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
+                                    winner = 2
+                                    break
+                                stake, table_stake, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r = bet3(ai1_action, stake, table_stake, 1, ai1_betting_state, ai2_betting_state, best_fund, challenger_fund, r)
+                                if(ai1_action == 0):
+                                    break
+                            
+                    else:
+                        print("errrrrrrrrrrrrrrrrrrrrrrrrrrrror3")
+                        print(check_turn(ai1_board, ai2_board))
+                        break
                 
                 if(winner != 0):
+                    if judge(ai1_hands + ai1_board, ai2_hands + ai2_board) == 1:
+                        switch = True
                     break
-                '''
-                print(ai1_hands, ai1_board)
-                print(ai1_state)
-                print(ai2_hands, ai2_board)
-                print(ai2_state)
-                '''
+                
                 winner = judge(ai1_hands + ai1_board, ai2_hands + ai2_board)
-         
-                if winner == 1:
-                    ai1_fund += table_stake
-                    self.ai1_rewards[len(self.ai1_rewards) - 1] = self.reward(table_stake)           
-                    break
-                elif winner == 2:
-                    ai2_fund += table_stake
-                    self.ai1_rewards[len(self.ai1_rewards) - 1] = -self.reward(table_stake)
-                    break
+                break
+            
+            if winner == 1:
+                best_fund += table_stake
+                if ai1_action == 0:
+                    self.training_actions[-1][0] = 0
+                    self.training_actions[-1][1] = 1 
+                self.training_rewards[len(self.training_rewards) - 1] = self.reward(table_stake)     
+            elif winner == 2:
+                challenger_fund += table_stake
+                if ai1_action == 0 and check_turn(ai1_board, ai2_board) == 2:
+                    switch = True
+                self.training_rewards[len(self.training_rewards) - 1] = -self.reward(table_stake)
+                
+            
+            if episode%10000 == 0:
+                self.save_model(episode)
                 
             if eval == True:
-                if winner == 1:
-                    best_score += 1
-                elif winner == 2:
-                    challenger_score += 1
-            
-            episode += 1
-            local_episode += 1
-            
-            test = np.ones(33)
-            test = np.reshape(test, [1, 33])
-            
-            with self.graph.as_default():
-                static = self.local_actor.predict(test)
+                eval_episode += 1
+                if eval_episode == 100:
+                    break
                 
-            print(static)
-             
-            self.train_model()
-            
-            if local_episode%100 == 0:
-                break
+            elif eval == False:
+                episode += 1
+                self.train_model()
+                self.update_model()
+                
+                if first == True:
+                    if episode%10000000 == 0:
+                        break
+                elif first == False:
+                    if episode%10000 ==0:
+                        break
             
 if __name__ == "__main__":
     global_agent = A3CAgent()
     global_agent.train()
     
     
-    '''
-
-            
-    def actor_optimizer(self):
-        action = K.placeholder(shape=[None, self.action_size])
-        advantages = K.placeholder(shape=[None, ])
-
-        policy = self.actor.output
-
-        
-        action_prob = K.sum(action * policy, axis=1)
-        cross_entropy = K.log(action_prob) * advantages
-        loss = -K.sum(cross_entropy)
-
-        optimizer = Adam(lr=self.actor_lr)
-        updates = optimizer.get_updates(self.actor.trainable_weights, [], loss)
-        train = K.function([self.actor.input, action, advantages], [], updates=updates)
-        return train
-
-    
-    def critic_optimizer(self):
-        discounted_prediction = K.placeholder(shape=[None,])
-
-        value = self.critic.output
-
-        
-        loss = K.mean(K.square(discounted_prediction - value))
-
-        optimizer = Adam(lr=self.critic_lr)
-        updates = optimizer.get_updates(self.critic.trainable_weights, [],loss)
-        train = K.function([self.critic.input, discounted_prediction], [], updates=updates)
-        return train
-    '''
     
