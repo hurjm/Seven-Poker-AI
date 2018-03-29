@@ -34,7 +34,7 @@ self.player_hand.emit(ai_hands)
             btn = False
             player_action = my_action
 '''
-
+'''f = open("파일.txt", 'w')data = '%d \n' % 111f.write(data)data = '%d \n' % 222f.write(data)f.close()f = open("파일.txt", 'r')data = f.readlines()print(data)f.close()'''
 class MyWindow(QMainWindow, form_class):
     def __init__(self):
         super().__init__()
