@@ -2,9 +2,10 @@
 import http.client, urllib.request, urllib.parse, urllib.error, base64, requests, json, cv2, time
 import numpy as np  
 from fileinput import filename
+import dis
 
 
-subscription_key = '0132f7cf745b4dccbb05f9d1d8d83b2d'
+subscription_key = '552230d5ad9e4f9a8b31f1d1ea44ab42'
 
 
 uri_base = 'https://westcentralus.api.cognitive.microsoft.com'
@@ -43,10 +44,11 @@ if capture.isOpened() == False :
 prevTime = 0
 
 while(1):
+    
     ret,frame = capture.read()  
     
     curTime = time.time()
-    start_curtTime = time.strftime("[%y%m%d] %X",time.localtime())
+    
     
     sec = curTime - prevTime
     prevTime = curTime
@@ -59,10 +61,27 @@ while(1):
     ##print ("Time %d" , format(sec))
     ##print ("Extimated fps %d" , format(fps))
     
-    str = "FPS : %0.1f" % fps
+    str = " FPS : %0.1f" % fps
+    str_n = " neutral : %0.3f" % neutral_a
+    str_a = " anger : %0.3f" % anger_a
+    str_f = " fear : %0.3f" % fear_a
+    str_c = " contempt : %0.3f" % contempt_a
+    str_d = " disgust : %0.3f" % disgust_a
+    str_h = " happy : %0.3f" % happiness_a
+    str_s = " sad : %0.3f" % sadness_a
+    str_ss = " surprise : %0.3f" % surprise_a
     
-   ## cv2.putText(frame, str, (0,100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0))
-    
+    cv2.putText(frame, str, (0,25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0))
+    cv2.putText(frame, str_n, (0,50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0))
+    cv2.putText(frame, str_a, (0,75), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0))
+    cv2.putText(frame, str_f, (0,100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0))
+    cv2.putText(frame, str_c, (0,125), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0))
+    cv2.putText(frame, str_d, (0,150), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0))
+    cv2.putText(frame, str_h, (0,175), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0))
+    cv2.putText(frame, str_s, (0,200), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0))
+    cv2.putText(frame, str_ss, (0,225), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0))
+   ## gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
     cv2.imshow( 'webcam', frame )
    ## fps = capture.get(cv2.CAP_PROP_FPS)
     if(count%10==0):
@@ -74,7 +93,7 @@ while(1):
        
     ##time.sleep(0.25)
     
-    if(count%20 ==0):
+    if(count%80 ==0):
         body = ""
         filename = ('D:/test/test/image%d.PNG' %0)
 
@@ -104,11 +123,12 @@ while(1):
             sadness_a = emotion_a['sadness']
             surprise_a = emotion_a['surprise']
             
-            print (anger_a)
-            print (neutral_a)
-            print (fear_a)
+            
+           ## print (anger_a)
+            ##print (neutral_a)
+            ##print (fear_a)
            
-            print (type(neutral_a))
+            ##print (type(neutral_a))
             ##print (type(emotion_a['neutral']))
             
             
@@ -118,6 +138,7 @@ while(1):
             print('Error:')
             print(e)
             
+    
     
     if c == 27:  
         break;  
