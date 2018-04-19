@@ -1,0 +1,47 @@
+self.case_set = np.array([])
+
+    def make_case(self, ai_card, player_board):
+        case = np.array([[0, 0], [0]])
+        deck = []
+        generate_deck(deck)
+        for i in (ai_card + player_board):
+            deck.remove(i)
+
+        if self.case_set.size == 0:
+            for i in itertools.combinations(deck, 2):
+                case[0][0] = i[0]
+                case[0][1] = i[1]
+                self.case_set = np.append(self.case_set, case)
+        else:
+            for index, elem in enumerate(self.case_set):
+                if not np.equal(elem[0], [ai_card[-1], player_board[-1]]).all():
+                    new_case_set = np.delete(self.case_set, index)
+            self.case_set = new_case_set
+
+    def divide_case(self, ai_card, player_board, player_action, turn):
+        player_hands = [0, 0]
+        result = [0, 0]
+
+        if turn <= 1:
+            for index, case in enumerate(self.case_set):
+                player_hands[0] = case[0][0]
+                player_hands[1] = case[0][1]
+
+                winner, player_range = judge_state(player_hands + player_board, ai_card)
+
+                if player_range[winner][0] <= 2:
+                    ai_state = self.preprocess(winner, player_range, ai_card, player_hands + player_board, turn)
+
+                    if type(ai_state) == np.ndarray:
+                        with self.graph.as_default():
+                            result += self.actor_model[turn].predict(ai_state)[0]
+                            print(self.actor_model[turn].predict(ai_state)[0])
+                else:
+                    result[winner] += 1
+
+                if result[0] >= 0.6 and player_action == 1:
+                    self.case_set[index][1] += 1
+                elif result[0] > 0.2 and result[0] < 0.6 and player_action == 0:
+                    self.case_set[index][1] += 1
+                #elif result[0] <= 0.2 and player_action == 0:
+                #    self.case_set[index][1] += 1
