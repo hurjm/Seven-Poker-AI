@@ -3,6 +3,7 @@ import http.client, urllib.request, urllib.parse, urllib.error, base64, requests
 import numpy as np  
 from fileinput import filename
 import dis
+from socket import *
 
 
 subscription_key = '552230d5ad9e4f9a8b31f1d1ea44ab42'
@@ -61,7 +62,7 @@ while(1):
     ##print ("Time %d" , format(sec))
     ##print ("Extimated fps %d" , format(fps))
     
-    str = " FPS : %0.1f" % fps
+    str = " FPS : %0.3f" % fps
     str_n = " neutral : %0.3f" % neutral_a
     str_a = " anger : %0.3f" % anger_a
     str_f = " fear : %0.3f" % fear_a
@@ -84,18 +85,18 @@ while(1):
 
     cv2.imshow( 'webcam', frame )
    ## fps = capture.get(cv2.CAP_PROP_FPS)
-    if(count%10==0):
+    ##if(count%20==0):
     ##print('save frame number : ' + str(int(capture.get(1))))
-        cv2.imwrite("image%d.png" % 0, frame , params=[cv2.IMWRITE_PNG_COMPRESSION,0])
+    cv2.imwrite("image%d.png" % 0, frame , params=[cv2.IMWRITE_PNG_COMPRESSION,0])
 
         
    ## print('fps', fps)    
        
     ##time.sleep(0.25)
     
-    if(count%80 ==0):
+    if(count%50 ==0):
         body = ""
-        filename = ('D:/test/test/image%d.PNG' %0)
+        filename = ('C:/image/test2/test/image%d.PNG' %0)
 
         f = open(filename,"rb")
         body = f.read()
@@ -136,7 +137,14 @@ while(1):
             
         except Exception as e:
             print('Error:')
-            print(e)
+            anger_a = 0.000
+            contempt_a = 0.000
+            disgust_a  = 0.000
+            fear_a = 0.000
+            happiness_a = 0.000
+            neutral_a = 0.000
+            sadness_a = 0.000
+            surprise_a = 0.000
             
     
     
