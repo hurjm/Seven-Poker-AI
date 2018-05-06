@@ -139,10 +139,10 @@ while(1):
             if ref:
                 
                 TrackingState = TRACKING_STATE_ON
-                print('tracking init succeeded')
+                print('tracking succeeded')
             else:
                 
-                TrackingState = TRACKING_STATE_CHECK
+                TrackingState = TRACKING_STATE_ON
                 print('tracking init failed')
 
         
@@ -154,8 +154,8 @@ while(1):
                 p1 = (int(TrackingROI[0]), int(TrackingROI[1]))
                 p2 = (int(TrackingROI[0] + TrackingROI[2]), int(TrackingROI[1] + TrackingROI[3]))
                
-                cv2.rectangle(frame, p1, p2, (255,0,0), 2, 1)
-                print('success x %d ' % (int(TrackingROI[0])) + 'y %d ' % (int(TrackingROI[1])) +
+                cv2.rectangle(frame, p1, p2, (0,0,255), 1, 1)
+                print('face x %d ' % (int(TrackingROI[0])) + 'y %d ' % (int(TrackingROI[1])) +
                         'w %d ' % (int(TrackingROI[2])) + 'h %d ' % (int(TrackingROI[3])))
             else:
                 print('Tracking failed')
