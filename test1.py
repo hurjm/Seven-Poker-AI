@@ -4,6 +4,7 @@ import numpy as np
 from fileinput import filename
 import dis
 from socket import *
+import sys
 
 
 subscription_key = '552230d5ad9e4f9a8b31f1d1ea44ab42'
@@ -36,7 +37,7 @@ neutral_a = 0
 sadness_a = 0
 surprise_a = 0
 
-capture = cv2.VideoCapture(0) 
+capture = cv2.VideoCapture(CAM_ID) 
 
 if capture.isOpened() == False :
     print ('can not open CAM', CAM_ID)
@@ -44,15 +45,65 @@ if capture.isOpened() == False :
 
 prevTime = 0
 
+
+
+TRACKING_STATE_CHECK=0
+
+TRACKING_STATE_INIT =1
+
+TRACKING_STATE_ON = 2
+
+
+(major_ver, minor_ver, subminor_ver) = (cv2.__version__).split('.')
+ 
+if __name__ == '__main__' :
+ 
+    # Set up tracker.
+    # Instead of MIL, you can also use
+ 
+    tracker_types = ['BOOSTING', 'MIL','KCF', 'TLD', 'MEDIANFLOW', 'GOTURN']
+    tracker_type = tracker_types[2]
+ 
+    if int(minor_ver) < 3:
+        tracker = cv2.MultiTracker_create(tracker_type)
+    else:
+        if tracker_type == 'BOOSTING':
+            tracker = cv2.TrackerBoosting_create()
+        if tracker_type == 'MIL':
+            tracker = cv2.TrackerMIL_create()
+        if tracker_type == 'KCF':
+            tracker = cv2.TrackerKCF_create()
+        if tracker_type == 'TLD':
+            tracker = cv2.TrackerTLD_create()
+        if tracker_type == 'MEDIANFLOW':
+            tracker = cv2.TrackerMedianFlow_create()
+        if tracker_type == 'GOTURN':
+            tracker = cv2.TrackerGOTURN_create()
+            
+
+    # Define an initial bounding box
+    
+   
+    face_cascade = cv2.CascadeClassifier()
+    
+    face_cascade.load('C:/opencv/opencv/sources/data/haarcascades/haarcascade_frontalface_default.xml')
+
+    
+    TrackingState = 0
+    
+    TrackingROI = (0,0,0,0)
+
+
 while(1):
     
-    ret,frame = capture.read()  
+    ref,frame = capture.read()  
     
     curTime = time.time()
     
     
     sec = curTime - prevTime
     prevTime = curTime
+    
     
     fps  = 1/(sec)
     
@@ -61,6 +112,57 @@ while(1):
     
     ##print ("Time %d" , format(sec))
     ##print ("Extimated fps %d" , format(fps))
+    
+    if TrackingState == TRACKING_STATE_CHECK:
+            
+            grayframe = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+            grayframe = cv2.equalizeHist(grayframe)
+           
+            faces  = face_cascade.detectMultiScale(grayframe, 1.1, 5, 0, (30, 30))
+
+            if len(faces) > 0:
+                
+                x,y,w,h = faces[0]
+                
+                TrackingROI = (x,y,w,h)
+                
+                cv2.rectangle(frame,(x,y),(x+w,y+h),(0,255,0),3, 4, 0)
+                
+                TrackingState = TRACKING_STATE_INIT
+                print('det w : %d ' % w + 'h : %d ' % h)
+
+
+      
+    elif TrackingState == TRACKING_STATE_INIT:
+            
+            ref = tracker.init(frame, TrackingROI)
+            if ref:
+                
+                TrackingState = TRACKING_STATE_ON
+                print('tracking init succeeded')
+            else:
+                
+                TrackingState = TRACKING_STATE_CHECK
+                print('tracking init failed')
+
+        
+    elif TrackingState == TRACKING_STATE_ON:
+           
+            ref, TrackingROI = tracker.update(frame)
+            if ref:
+                
+                p1 = (int(TrackingROI[0]), int(TrackingROI[1]))
+                p2 = (int(TrackingROI[0] + TrackingROI[2]), int(TrackingROI[1] + TrackingROI[3]))
+               
+                cv2.rectangle(frame, p1, p2, (255,0,0), 2, 1)
+                print('success x %d ' % (int(TrackingROI[0])) + 'y %d ' % (int(TrackingROI[1])) +
+                        'w %d ' % (int(TrackingROI[2])) + 'h %d ' % (int(TrackingROI[3])))
+            else:
+                print('Tracking failed')
+
+                TrackingState = TRACKING_STATE_CHECK
+
     
     str = " FPS : %0.3f" % fps
     str_n = " neutral : %0.3f" % neutral_a
