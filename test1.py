@@ -7,7 +7,7 @@ from socket import *
 
 
 
-subscription_key = '552230d5ad9e4f9a8b31f1d1ea44ab42'
+subscription_key = '6ead645e208f4106ab8f32f574cd61a6'
 
 
 uri_base = 'https://westcentralus.api.cognitive.microsoft.com'
@@ -44,6 +44,7 @@ if capture.isOpened() == False :
     exit()
 
 prevTime = 0
+ccount=0
 
 
 
@@ -143,7 +144,6 @@ while(1):
             else:
                 
                 TrackingState = TRACKING_STATE_ON
-                print('tracking init failed')
 
         
     elif TrackingState == TRACKING_STATE_ON:
@@ -159,9 +159,10 @@ while(1):
                         'w %d ' % (int(TrackingROI[2])) + 'h %d ' % (int(TrackingROI[3])))
             else:
                 print('Tracking failed')
+                ccount = ccount+1
 
                 TrackingState = TRACKING_STATE_CHECK
-
+             
     
     str = " FPS : %0.3f" % fps
     str_n = " neutral : %0.3f" % neutral_a
