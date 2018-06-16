@@ -1,14 +1,15 @@
 from copy import deepcopy
-from keras.layers import Dense
-from keras.models import Sequential
 import numpy as np
-import tensorflow as tf
 import sys
 from PyQt5.QtWidgets import QMainWindow, QApplication
 from PyQt5 import uic
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
+from keras.layers import Dense
+from keras.optimizers import Adam
 from keras import backend as K
+from keras.models import Sequential
+import tensorflow as tf
 import itertools
 import random
 import time
@@ -26,6 +27,8 @@ for num in range(2, 10):
     value_dict[str(num)] = num - 2
 
 count = 0
+first = True
+bluff = True
 
 class Card:
     # Takes in strings of the format: "As", "Tc", "6d"
@@ -91,9 +94,9 @@ def check_turn(ai1_board, ai2_board):
         else:
             result_full.append(ai1_full)
             result_full.append(ai2_full)
-            return result_full.index(max(result_full)) + 1
+            return result_full.index(max(result_full))
         
-    return result.index(max(result)) + 1
+    return result.index(max(result))
 
 def generate_deck(deck):
     for value in val_string1:
@@ -102,24 +105,6 @@ def generate_deck(deck):
     for value in val_string2:
         for suit in suit_index:
             deck.append(Card(value + suit))
-
-# Generate all possible hole card combinations
-def generate_hole_cards(deck):
-    return itertools.combinations(deck, 2)
-
-# Generate num_iterations random boards
-def generate_random_drawn_cards(deck, empty_length):
-    random.seed(time.time())
-    global count
-    for _ in range(10000):
-        yield random.sample(deck, empty_length)
-
-def generate_play_cards(drawn_cards, player_empty_length):
-    return itertools.combinations(drawn_cards, player_empty_length)
-
-# Generate all possible boards
-def generate_exhaustive_cards(deck, empty_length):
-    return itertools.combinations(deck, empty_length)
 
 # Returns a board of cards all with suit = flush_index
 def generate_suit_board(flat_board, flush_index):
@@ -147,21 +132,18 @@ def preprocess_board(flat_board):
 
 # Returns tuple: (Is there a straight flush?, high card)
 def detect_straight_flush(suit_board):
-    contiguous_length, fail_index = 1, len(suit_board) - 5
-    # Won't overflow list because we fail fast and check ahead
-    for index, elem in enumerate(suit_board):
-        current_val, next_val = elem, suit_board[index + 1]
-        if next_val == current_val - 1:
-            contiguous_length += 1
-            if contiguous_length == 5:
-                return True, current_val + 3
-        else:
-            # Fail fast if straight not possible
-            if index >= fail_index:
-                if (index == fail_index and next_val == 4 and suit_board[0] == 12):
-                    return True, 4
-                break
-            contiguous_length = 1
+    contiguous_length = 0
+    if len(suit_board) >= 5:
+        for i in range(len(suit_board) - 1):
+            if suit_board[i] - 1 == suit_board[i + 1]: 
+                contiguous_length += 1
+                last_val = suit_board[i + 1]
+                if contiguous_length >= 3 and last_val <= 1 and suit_board[0] == 12 and suit_board[-1] == 0:
+                    return True, 0
+                if contiguous_length == 4:
+                    return True, last_val + 4
+            else:
+                contiguous_length  = 0
     return False,
 
 # Returns the highest kicker available
@@ -172,21 +154,18 @@ def detect_highest_quad_kicker(histogram_board):
 
 # Returns tuple: (Is there a straight?, high card)
 def detect_straight(histogram_board):
-    contiguous_length, fail_index = 1, len(histogram_board) - 5
-    # Won't overflow list because we fail fast and check ahead
-    for index, elem in enumerate(histogram_board):
-        current_val, next_val = elem[0], histogram_board[index + 1][0]
-        if next_val == current_val - 1:
-            contiguous_length += 1
-            if contiguous_length == 5:
-                return True, current_val + 3
-        else:
-            # Fail fast if straight not possible
-            if index >= fail_index:
-                if (index == fail_index and next_val == 4 and histogram_board[0][0] == 12):
-                    return True, 4
-                break
-            contiguous_length = 1
+    contiguous_length = 0
+    if len(histogram_board) >= 5:
+        for i in range(len(histogram_board) - 1):
+            if histogram_board[i][0] - 1 == histogram_board[i + 1][0]: 
+                contiguous_length += 1
+                last_val = histogram_board[i + 1][0]
+                if contiguous_length >= 3 and last_val <= 1 and histogram_board[0][0] == 12 and histogram_board[-1][0] == 0:
+                    return True, 0
+                if contiguous_length == 4:
+                    return True, last_val + 4
+            else:
+                contiguous_length  = 0
     return False,
 
 # Returns tuple of the two highest kickers that result from the three of a kind
@@ -254,7 +233,7 @@ def detect_hand(given_cards, suit_histogram, num_histogram, max_suit, full_histo
         if result[0]:
             if result[1] == 12:
                 return 12, suit_histogram.index(max_suit)
-            elif result[1] == 4:
+            elif result[1] == 0:
                 return 11, suit_histogram.index(max_suit)
             else:
                 return 10, result[1], suit_histogram.index(max_suit)
@@ -286,7 +265,7 @@ def detect_hand(given_cards, suit_histogram, num_histogram, max_suit, full_histo
         if result[0]:
             if result[1] == 12:
                 return 6, detect_high_suit(result[1], full_histogram)
-            elif result[1] == 4:
+            elif result[1] == 0:
                 return 5, detect_high_suit(12, full_histogram)
             else:
                 return 4, result[1], detect_high_suit(result[1], full_histogram)
@@ -296,14 +275,14 @@ def detect_hand(given_cards, suit_histogram, num_histogram, max_suit, full_histo
     if current_max == 2:
         # Check to see if there is a two pair
         if second_max == 2:
-            return 2, max_val, second_max_val, detect_highest_kicker(histogram_board), detect_high_suit(max_val, full_histogram)
+            return 2, max_val, second_max_val, detect_high_suit(max_val, full_histogram)#detect_highest_kicker(histogram_board), 
         # Return pair
         else:
             return 1, max_val, detect_pair_kickers(histogram_board), detect_high_suit(max_val, full_histogram)
     # Check for high cards
     return 0, get_high_cards(histogram_board), detect_high_suit(max(max(get_high_cards(histogram_board))), full_histogram)
 
-def detect_hand_for_state(given_cards, suit_histogram, num_histogram, max_suit, full_histogram):
+def detect_hand_player_state(given_cards, suit_histogram, num_histogram, max_suit, full_histogram):
     # Determine if flush possible. If yes, four of a kind and full house are
     # impossible, so return royal, straight, or regular flush.
     if max_suit >= 5:
@@ -313,14 +292,18 @@ def detect_hand_for_state(given_cards, suit_histogram, num_histogram, max_suit, 
         result = detect_straight_flush(suit_board)
         
         if result[0]:
-            return 36
-        
-        return 33
+            if result[1] == 12:
+                return 28
+            elif result[1] == 0:
+                return 28
+            else:
+                return 28
+            
+        return 28
 
     # Add hole cards to histogram data structure and process it
     num_histogram = num_histogram[:]
     histogram_board = preprocess(num_histogram)
-
     # Find which card value shows up the most and second most times
     current_max, max_val, second_max, second_max_val = 0, 0, 0, 0
     for item in histogram_board:
@@ -330,40 +313,102 @@ def detect_hand_for_state(given_cards, suit_histogram, num_histogram, max_suit, 
             current_max, max_val = frequency, val
         elif frequency > second_max:
             second_max, second_max_val = frequency, val
+
     # Check to see if there is a four of a kind
     if current_max == 4:
-        return 35, max_val
+        return 28
     # Check to see if there is a full house
     if current_max == 3 and second_max >= 2:
-        return 34, max_val, second_max_val
+        return 28
     # Check to see if there is a straight
     if len(histogram_board) >= 5:
         result = detect_straight(histogram_board)
         if result[0]:
-            return 32
+            if result[1] == 12:
+                return 28
+            elif result[1] == 0:
+                return 28
+            else:
+                return 28
     # Check to see if there is a three of a kind
     if current_max == 3:
-        return 31, max_val
+        return 28
     if current_max == 2:
         # Check to see if there is a two pair
         if second_max == 2:
-            return max_val + 19, max_val, second_max_val
+            return max_val + 15
         # Return pair
         else:
-            return max_val + 6, max_val
+            return max_val + 1
     # Check for high cards
-    top = get_high_cards(histogram_board)
-    return 0 + top[0][0], top[0][0]
+    return 0
 
-# Returns the index of the player with the winning hand
+def detect_hand_ai_state(given_cards, suit_histogram, num_histogram, max_suit, full_histogram):
+    # Determine if flush possible. If yes, four of a kind and full house are
+    # impossible, so return royal, straight, or regular flush.
+    if max_suit >= 5:
+        flush_index = suit_histogram.index(max_suit)
+        flat_board = list(given_cards)
+        suit_board = generate_suit_board(flat_board, flush_index)
+        result = detect_straight_flush(suit_board)
+        
+        if result[0]:
+            if result[1] == 12:
+                return 3
+            elif result[1] == 0:
+                return 3
+            else:
+                return 3
+            
+        return 3
+
+    # Add hole cards to histogram data structure and process it
+    num_histogram = num_histogram[:]
+    histogram_board = preprocess(num_histogram)
+    # Find which card value shows up the most and second most times
+    current_max, max_val, second_max, second_max_val = 0, 0, 0, 0
+    for item in histogram_board:
+        val, frequency = item[0], item[1]
+        if frequency > current_max:
+            second_max, second_max_val = current_max, max_val
+            current_max, max_val = frequency, val
+        elif frequency > second_max:
+            second_max, second_max_val = frequency, val
+
+    # Check to see if there is a four of a kind
+    if current_max == 4:
+        return 3
+    # Check to see if there is a full house
+    if current_max == 3 and second_max >= 2:
+        return 3
+    # Check to see if there is a straight
+    if len(histogram_board) >= 5:
+        result = detect_straight(histogram_board)
+        if result[0]:
+            if result[1] == 12:
+                return 3
+            elif result[1] == 0:
+                return 3
+            else:
+                return 3
+    # Check to see if there is a three of a kind
+    if current_max == 3:
+        return 3
+    if current_max == 2:
+        # Check to see if there is a two pair
+        if second_max == 2:
+            return 2
+        # Return pair
+        else:
+            return 1
+    # Check for high cards
+    return 0
 
 def compare_hands(result_list):
+    
     best_hand = max(result_list)
-    winning_player_index = result_list.index(best_hand) + 1
-    # Check for ties
-    if best_hand in result_list[winning_player_index:]:
-        return 0
-    return winning_player_index
+    
+    return result_list.index(best_hand)
 
 def bet(action, stake, table_stake, id, fund):
     if action == 0:
@@ -403,40 +448,35 @@ def bet(action, stake, table_stake, id, fund):
 
 def judge_end(ai1_cards, ai2_cards):
     result_list = [None] * 2
-    winner_list = [0] * 3
-                
     ai1_suit_histogram, ai1_histogram, ai1_max_suit, ai1_full_histogram = preprocess_board(ai1_cards)
     ai2_suit_histogram, ai2_histogram, ai2_max_suit, ai2_full_histogram = preprocess_board(ai2_cards)
-    
     result_list[0] = detect_hand(ai1_cards, ai1_suit_histogram, ai1_histogram, ai1_max_suit, ai1_full_histogram)
     result_list[1] = detect_hand(ai2_cards, ai2_suit_histogram, ai2_histogram, ai2_max_suit, ai2_full_histogram)
-    print(result_list)
-    winner_index = compare_hands(result_list)
-    winner_list[winner_index] += 1
-            
-    if winner_list[1] == 1:
-        winner = 0
-    else:
-        winner = -1
+    winner = compare_hands(result_list)
     return winner
+
+def player_state_preprocess(player_card):
+    suit_histogram, histogram, max_suit, full_histogram = preprocess_board(player_card)
+
+    return detect_hand_player_state(player_card, suit_histogram, histogram, max_suit, full_histogram)
 
 def judge_state(ai1_cards, ai2_cards):
     result_list = [None] * 2
     winner_list = [0] * 3
-                
     ai1_suit_histogram, ai1_histogram, ai1_max_suit, ai1_full_histogram = preprocess_board(ai1_cards)
     ai2_suit_histogram, ai2_histogram, ai2_max_suit, ai2_full_histogram = preprocess_board(ai2_cards)
     
     result_list[0] = detect_hand(ai1_cards, ai1_suit_histogram, ai1_histogram, ai1_max_suit, ai1_full_histogram)
     result_list[1] = detect_hand(ai2_cards, ai2_suit_histogram, ai2_histogram, ai2_max_suit, ai2_full_histogram)
-    print(result_list)
+
     winner_index = compare_hands(result_list)
     winner_list[winner_index] += 1
-            
-    if winner_list[1] == 1:
+
+    if winner_list[0] == 1:
         winner = 0
-    else:
+    elif winner_list[1] == 1:
         winner = -1
+
     return winner, result_list
 
 def judge_demo(cards):
@@ -456,19 +496,10 @@ class MyWindow(QMainWindow, form_class):
     def __init__(self):
         super().__init__()
         
-        self.sess = tf.InteractiveSession()
-        K.set_session(self.sess)
-        self.sess.run(tf.global_variables_initializer())
-        self.graph = tf.get_default_graph()
-        
-        self.actor_model = [self.build_flop_actor_model(), self.build_turn_actor_model()]
-        for type in range(2):
-            self.actor_model[type].load_weights('actor_' + str(type) + '.h5')
-        
         self.setupUi(self)
         self.background.setStyleSheet("border-image: url(./resource/table);")
         
-        self.th = Table(self.actor_model, self.sess, self.graph)
+        self.th = Table()
         self.th.cards_status.connect(self.cards_status)
         self.th.end.connect(self.end)
         self.th.fund.connect(self.fund)
@@ -478,6 +509,7 @@ class MyWindow(QMainWindow, form_class):
         self.th.ai_card_range.connect(self.ai_card_range)
         self.th.judge_winner.connect(self.judge_winner)
         self.th.btn_status.connect(self.btn_status)
+        self.th.turn2_btn.connect(self.turn2_btn)
         self.th.action_status.connect(self.action_status)
         self.th.regame.connect(self.regame)
         self.th.ai_turn.connect(self.ai_turn)
@@ -692,7 +724,7 @@ class MyWindow(QMainWindow, form_class):
         elif card_range[0] == 1:
             self.label_22.setText(high_card[card_range[1] + 2] + ' One Pair')
         elif card_range[0] == 2:
-            self.label_22.setText(high_card[card_range[1] + 2] + ' ' + high_card[card_range[2]] + ' Two Pair')
+            self.label_22.setText(high_card[card_range[1] + 2] + ' ' + high_card[card_range[2] + 2] + ' Two Pair')
         elif card_range[0] == 3:
             self.label_22.setText(high_card[card_range[1] + 2] + ' Three of a Kind')
         elif card_range[0] == 4:
@@ -702,9 +734,9 @@ class MyWindow(QMainWindow, form_class):
         elif card_range[0] == 6:
             self.label_22.setText('Mountain')
         elif card_range[0] == 7:
-            self.label_22.setText(high_card[card_range[1][0][0] + 2] + ' Flush')
+            self.label_22.setText(high_card[card_range[1][0] + 2] + ' Flush')
         elif card_range[0] == 8:
-            self.label_22.setText(high_card[card_range[1] + 2] + ' ' + high_card[card_range[2]] + ' Full House')
+            self.label_22.setText(high_card[card_range[1] + 2] + ' ' + high_card[card_range[2] + 2] + ' Full House')
         elif card_range[0] == 9:
             self.label_22.setText(high_card[card_range[1] + 2] + ' Four of a Kind')
         elif card_range[0] == 10:
@@ -717,74 +749,72 @@ class MyWindow(QMainWindow, form_class):
     def judge_winner(self, winner):
         if winner == 0:
             self.label_23.setText('AI Win!')
-        elif winner == -1:
+        elif winner == 1:
             self.label_23.setText('Player Win!')
 
-    def btn_status(self, btn, my_all_in, ai_all_in):
+    def btn_status(self, btn, player_fund, stake, ai_all_in, table_stake):
         if btn:
-            if my_all_in or ai_all_in:
+            if player_fund <= stake or ai_all_in:
                 self.callorcheck.setEnabled(btn)
                 self.fold.setEnabled(btn)
+                self.label_18.setText('All In')
+                self.label_19.clear()
+                
+            elif player_fund <= stake * 2 or player_fund <= table_stake/2:
+                self.callorcheck.setEnabled(btn)
+                self.bet.setEnabled(btn)
+                self.fold.setEnabled(btn)
+                self.label_19.setText('All In')
+                    
             else:
                 self.callorcheck.setEnabled(btn)
                 self.fold.setEnabled(btn)
                 self.bet.setEnabled(btn)
+                
         else:
             self.callorcheck.setEnabled(btn)
             self.bet.setEnabled(btn)
             self.fold.setEnabled(btn)
-        
     
-    def action_status(self, id, action, stake):
-        if id == 1:
+    def turn2_btn(self):
+        self.bet.setEnabled(False)
+        self.label_19.clear()
+    
+    def action_status(self, id, action, stake, fund):
+        if id == 0:
             self.label_24.clear()
             if action == 0:
                 if stake == 0:
                     self.label_25.setText('Check')
                 elif stake > 0:
-                    self.label_25.setText('Call ' + str(stake))
+                    if fund < stake:
+                        self.label_25.setText('Call ' + str(fund))
+                    else:
+                        self.label_25.setText('Call ' + str(stake))
             elif action == 1:
-                self.label_25.setText('Raise ' + str(stake))
+                if fund < stake * 2:
+                    self.label_25.setText('Raise ' + str(fund))
+                else:
+                    self.label_25.setText('Raise ' + str(stake))
             elif action == 2:
                 self.label_25.setText('Fold')
-        if id == 2:
+        if id == 1:
             self.label_25.clear()
             if action == 0:
                 if stake == 0:
                     self.label_24.setText('Check')
                 elif stake > 0:
-                    self.label_24.setText('Call ' + str(stake))
+                    if fund < stake:
+                        self.label_24.setText('Call ' + str(fund))
+                    else:
+                        self.label_24.setText('Call ' + str(stake))
             elif action == 1:
-                self.label_24.setText('Raise ' + str(stake))
+                if fund < stake * 2:
+                    self.label_24.setText('Raise ' + str(fund))
+                else:
+                    self.label_24.setText('Raise ' + str(stake))
             elif action == 2:
                 self.label_24.setText('Fold')
-                   
-    def build_flop_actor_model(self):
-        actor = Sequential()
-        
-        actor.add(Dense(200, input_dim=98, activation='relu', kernel_initializer='he_normal'))
-        
-        for _ in range(10):
-            actor.add(Dense(100, activation='relu', kernel_initializer='he_normal'))
-            
-        actor.add(Dense(2, activation='softmax', kernel_initializer='he_normal'))
-        
-        actor.summary()
-
-        return actor
-    
-    def build_turn_actor_model(self):
-        actor = Sequential()
-        
-        actor.add(Dense(300, input_dim=144, activation='relu', kernel_initializer='he_normal'))
-        for _ in range(10):
-            actor.add(Dense(150, activation='relu', kernel_initializer='he_normal'))
-        
-        actor.add(Dense(2, activation='softmax', kernel_initializer='he_normal'))
-        
-        actor.summary()
-
-        return actor
 
 class Table(QThread):
     cards_status = pyqtSignal(list, list, list, list)
@@ -795,21 +825,419 @@ class Table(QThread):
     card_range = pyqtSignal(tuple)
     ai_card_range = pyqtSignal(tuple)
     judge_winner = pyqtSignal(int)
-    btn_status = pyqtSignal(bool, bool, bool)
-    action_status = pyqtSignal(int, int, int)
+    btn_status = pyqtSignal(bool, int, int, bool, int)
+    turn2_btn = pyqtSignal()
+    action_status = pyqtSignal(int, int, int, int)
     regame = pyqtSignal()
     ai_turn = pyqtSignal(int)
     
-    def __init__(self, actor_model, sess, graph):
+    def __init__(self):
         super().__init__()
+        self.action_size = 3
+        self.actor_lr = 0.0025
         
-        self.actor_model = actor_model
-        self.sess = sess
-        self.graph = graph
+        self.sess = tf.InteractiveSession()
+        K.set_session(self.sess)
+        self.sess.run(tf.global_variables_initializer())
+        
+        K.set_learning_phase(1)
+        self.graph = tf.get_default_graph()
+        
+        self.trainning_sample = []
+        
+        self.ai_actor = [self.build_ai1_actor_model(), self.build_ai2_actor_model()]
+        self.player_actor = self.build_player_actor_model()
+        
+        self.optimizer_actor = self.bulid_actor_optimizer()
+        self.load_model()
+        
+    def build_ai1_actor_model(self):
+        actor = Sequential()
+        
+        actor.add(Dense(47, input_dim=47, activation='relu', kernel_initializer='he_normal'))
+        
+        for _ in range(10):
+            actor.add(Dense(31, activation='relu', kernel_initializer='he_normal'))
+            
+        actor.add(Dense(2, activation='softmax', kernel_initializer='he_normal'))
+        
+        actor.summary()
 
+        return actor
+    
+    def build_ai2_actor_model(self):
+        actor = Sequential()
+        
+        actor.add(Dense(54, input_dim=54, activation='relu', kernel_initializer='he_normal'))
+        
+        for _ in range(10):
+            actor.add(Dense(36, activation='relu', kernel_initializer='he_normal'))
+            
+        actor.add(Dense(2, activation='softmax', kernel_initializer='he_normal'))
+        
+        actor.summary()
+
+        return actor
+    
+    def build_player_actor_model(self):
+        actor = Sequential()
+        
+        actor.add(Dense(45, input_dim=45, activation='relu', kernel_initializer='he_normal'))
+        
+        for _ in range(10):
+            actor.add(Dense(36, activation='relu', kernel_initializer='he_normal'))
+            
+        actor.add(Dense(3, activation='softmax', kernel_initializer='he_normal'))
+        
+        actor.summary()
+
+        return actor
+        
+    def bulid_actor_optimizer(self):
+        action = K.placeholder(shape=[None, self.action_size])
+        advantages = K.placeholder(shape=[None, ])
+        
+        policy = self.player_actor.output
+        
+        action_prob = K.sum(action * policy, axis=1)
+        
+        cross_entropy = K.log(action_prob) * advantages
+        loss = -K.sum(cross_entropy)
+
+        optimizer = Adam(lr=self.actor_lr)
+        updates = optimizer.get_updates(self.player_actor.trainable_weights, [],loss)
+        train = K.function([self.player_actor.input, action, advantages], [loss], updates=updates)
+        return train
+    
+    def bet_state(self, fund, op_fund, table_stake, stake, action):
+        if action == 0:
+            if stake == 0:
+                return fund, table_stake, stake
+            else:
+                fund -= stake
+                table_stake += stake
+                return fund, table_stake, stake
+        elif action == 1:
+            fund -= stake
+            table_stake += stake
+            stake = 0
+            if fund >= table_stake/2:
+                stake += table_stake/2
+            else:
+                stake += fund
+            if stake > op_fund:
+                stake = op_fund
+            fund -= stake
+            return fund, table_stake, stake
+    
+    def calc_expectation(self, ai_card, player_card, player_action, player_fund, ai_fund, table_stake, stake, p):
+        if stake == 0:
+            if player_action == 0:
+                Ec = 2 * table_stake * p - table_stake
+                Ef = -table_stake
+                
+                ai_fund, table_stake, stake = self.bet_state(ai_fund, player_fund, table_stake, stake, 1)
+                
+                with self.graph.as_default():
+                    q = self.player_actor.predict(self.player_state(player_card, table_stake))[0]
+                    
+                Er = (2 * table_stake * p - table_stake) * (1 - q[2]) + (table_stake * q[2])
+
+                return np.array([Ec, Er, Ef])
+            else:
+                with self.graph.as_default():
+                    q = self.player_actor.predict(self.player_state(player_card, table_stake))[0]
+                    
+                Ec = ((2 * table_stake * p - table_stake) * q[0]) + (table_stake * q[2])
+                player_fund, table_stake, stake = self.bet_state(player_fund, ai_fund, table_stake, stake, 1)
+                if p > 0.25:
+                    Ec += (2 * table_stake * p - table_stake) * q[1]
+                else:
+                    Ec += -table_stake * q[1]
+                
+                Ef = -table_stake
+                
+                ai_fund, table_stake, stake = self.bet_state(ai_fund, player_fund, table_stake, stake, 1)
+                
+                with self.graph.as_default():
+                    q = self.player_actor.predict(self.player_state(player_card, table_stake))[0]
+                    
+                player_action = 1
+                Er = ((2 * table_stake * p - table_stake) * q[0]) + (table_stake * q[2]) + (q[1] * max(self.calc_expectation(ai_card, player_card, player_action, player_fund, ai_fund, table_stake, stake, p)))
+
+                return np.array([Ec, Er, Ef])
+        else:
+            if stake >= ai_fund:
+                _, table_stake1, _ = self.bet_state(ai_fund, player_fund, table_stake, stake, 0)
+                Ec = 2 * table_stake1 * p - table_stake1
+                Ef = -table_stake
+
+                return np.array([Ec, Ec, Ef])
+            else:
+                _, table_stake1, _ = self.bet_state(ai_fund, player_fund, table_stake, stake, 0)
+                Ec = 2 * table_stake1 * p - table_stake1
+                Ef = -table_stake
+                
+                ai_fund, table_stake, stake = self.bet_state(ai_fund, player_fund, table_stake, stake, 1)
+                
+                with self.graph.as_default():
+                    q = self.player_actor.predict(self.player_state(player_card, table_stake))[0]
+                    
+                Er = ((2 * table_stake * p - table_stake) * q[0]) + (table_stake * q[2])
+                if stake < player_fund:
+                    Er += q[1] * max(self.calc_expectation(ai_card, player_card, player_action, player_fund, ai_fund, table_stake, stake, p))
+                    
+                return np.array([Ec, Er, Ef])
+                      
+                      
+    def choice(self, ai_card, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn):
+        result = np.zeros(2)
+        for player_hand in list(dic.keys()):
+            player_hand = list(player_hand)
+            p = np.zeros(2)
+            if turn <= 1:
+                if turn == 0:
+                    state = np.zeros(47).reshape(1, 47)
+                elif turn == 1:
+                    state = np.zeros(54).reshape(1, 54)
+                
+                winner, range = judge_state(ai_card, player_hand + player_board)
+                
+                preproc = self.preprocess(winner, range, ai_card, player_hand + player_board, turn)
+                
+                if preproc == False:
+                    if winner == 0:
+                        p[0] = 1
+                    elif winner == -1:
+                        p[1] = 1
+                else:
+                    state[0][preproc] = 1
+                    with self.graph.as_default():
+                        p = self.ai_actor[turn].predict(state)[0]
+                #a = dic[tuple(player_hand)] * self.calc_expectation(ai_card, player_hand + player_board, player_action, player_fund, ai_fund, table_stake, stake, p)
+                
+                result += dic[tuple(player_hand)] * p 
+                
+            elif turn == 2:
+                deck = []
+                generate_deck(deck)
+                for i in (ai_card + player_hand + player_board):
+                    deck.remove(i)
+                
+                for i in deck:
+                    player_hand.append(i)
+                    
+                    if judge_end(ai_card, player_hand + player_board) == 0:
+                        p[0] = 1
+                    elif judge_end(ai_card, player_hand + player_board) == 1:
+                        p[1] = 1
+                    
+                    #result += dic[tuple(player_hand[:2])] * self.calc_expectation(ai_card, player_hand + player_board, player_action, player_fund, ai_fund, table_stake, stake, p)
+                    result += dic[tuple(player_hand[:2])] * p 
+                    player_hand.pop()    
+                    
+        print(result)
+        result /= result.sum()
+        print(result)
+        if result[0] > 0.5:
+            return np.random.choice(2, 1, p=[1 - result[0], result[0]])[0]
+        elif result[0] > 0.25 and result[0] <= 0.5:
+            return 0
+        else:
+            return 2
+        #return np.where(result == max(result))[0][0]
+    
+    def del_dic(self, dic, card):
+        for i in list(dic.keys()):
+            for j in card:
+                if j in i:    
+                    del dic[i]
+                    break    
+    
+    def add_dic(self, dic, player_board, table_stake, player_action):
+        for player_hand in list(dic.keys()):
+            player_hand = list(player_hand)
+            with self.graph.as_default():
+                dic[tuple(player_hand)] += self.player_actor.predict(self.player_state(player_hand + player_board, table_stake))[0][player_action]
+            
+        return dic
+    
+    def player_state(self, cards, table_stake):
+        state = np.zeros(45)
+        state[player_state_preprocess(cards)] += 1
+        state[self.stake_state(table_stake)] += 1
+        return state.reshape(1, 45)
+    
+    def collect_sample(self, player_card, table_stake, player_action):
+        action = np.zeros(3).reshape(1, 3)
+        action[0][player_action] += 1
+        
+        state = self.player_state(player_card, table_stake)
+        index = np.where(state[0] == 1)[0]
+        dis = 1
+        for i in range(index[0] - 1, -1, -1):
+            dis *= 0.9
+            state[0][i] += dis
+        dis = 1
+        for i in range(index[0] + 1, 29, 1):
+            dis *= 0.9
+            state[0][i] += dis
+        dis = 1
+        for i in range(index[1] - 1, 28, -1):
+            dis *= 0.9
+            state[0][i] += dis
+        dis = 1
+        for i in range(index[1] + 1, 45, 1):
+            dis *= 0.9
+            state[0][i] += dis
+        
+        self.trainning_sample.append([state, action])
+    
+    def train(self, fold):
+        if fold == False:
+            for i in range(len(self.trainning_sample)):
+                with self.graph.as_default():
+                    if self.player_actor.predict(self.trainning_sample[i][0])[0][np.where(self.trainning_sample[i][1][0] == 1)] >= 0.9:
+                        continue
+                self.optimizer_actor([self.trainning_sample[i][0], self.trainning_sample[i][1], [1]])
+                
+        elif fold == True:
+            for i in range(len(self.trainning_sample)):
+                for j in range(29):
+                    self.trainning_sample[i][0][0][j] = 0
+                with self.graph.as_default():
+                    if self.player_actor.predict(self.trainning_sample[i][0])[0][np.where(self.trainning_sample[i][1][0] == 1)] >= 0.9:
+                        continue
+                self.optimizer_actor([self.trainning_sample[i][0], self.trainning_sample[i][1], [1]])
+    
+    def preprocess(self, winner, range, ai_card, player_card, turn):
+        count = 0
+        count2 = 0
+        ai_state = 0
+        if range[winner][0] > 2:
+            return False
+        
+        if turn == 0:
+            if range[0][0] == 0 and range[1][0] == 0:
+                for i in ai_card:
+                    for j in player_card:
+                        if i.value > j.value:
+                            count += 1
+                ai_state = count
+                
+            elif range[0][0] == 0 and range[1][0] == 1:
+                for i in ai_card:
+                    if i.value > range[1][1]:
+                        count += 1
+                ai_state = count + 26
+            
+            elif range[0][0] == 0 and range[1][0] == 2:
+                for i in ai_card:
+                    if i.value > range[1][1]:
+                        count += 1
+                ai_state = count + 32   
+            
+            elif range[0][0] == 1 and range[1][0] == 0:
+                for i in player_card:
+                    if i.value > range[0][1]:
+                        count += 1
+                ai_state = count + 38
+                
+            elif range[0][0] == 1 and range[1][0] == 1:
+                if winner == 0:
+                    ai_state = 44
+                        
+                elif winner == -1:
+                    ai_state = 45
+                
+            elif range[0][0] == 1 and range[1][0] == 2:
+                ai_state = 46
+            else:
+                return False
+                        
+        elif turn == 1:
+            
+            if range[0][0] == 0 and range[1][0] == 0:
+                for i in ai_card:
+                    for j in player_card:
+                        if i.value > j.value:
+                            count += 1
+                ai_state = count
+                
+            elif range[0][0] == 0 and range[1][0] == 1:
+                for i in ai_card:
+                    if i.value > range[1][1]:
+                        count += 1
+                        
+                ai_state = count + 37
+            
+            elif range[0][0] == 1 and range[1][0] == 0:
+                for i in player_card:
+                    if i.value > range[0][1]:
+                        count += 1
+                ai_state = count + 44
+            
+            elif range[0][0] == 1 and range[1][0] == 1:
+                if winner == 0:
+                    ai_state = 51
+                        
+                elif winner == -1:
+                    ai_state = 52
+                    
+            elif range[0][0] == 1 and range[1][0] == 2:
+                ai_state = 53
+            else:
+                return False
+                       
+        return ai_state
+    
+    def stake_state(self, table_stake):
+        if table_stake >= 384000:
+            return 44
+        elif table_stake >= 256000:
+            return 43
+        elif table_stake >= 192000:
+            return 42  
+        elif table_stake >= 128000:
+            return 41
+        elif table_stake >= 96000:
+            return 40
+        elif table_stake >= 64000:
+            return 39
+        elif table_stake >= 48000:
+            return 38
+        elif table_stake >= 32000:
+            return 37
+        elif table_stake >= 24000:
+            return 36
+        elif table_stake >= 16000:
+            return 35
+        elif table_stake >= 12000:
+            return 34
+        elif table_stake >= 8000:
+            return 33
+        elif table_stake >= 6000:
+            return 32
+        elif table_stake >= 4000:
+            return 31
+        elif table_stake >= 3000:
+            return 30
+        elif table_stake >= 2000:
+            return 29
+    
+    def load_model(self):
+        #self.player_actor.load_weights('player_model.h5')
+        for num in range(2):
+            self.ai_actor[num].load_weights('actor_' + str(num) + '.h5')
+
+    def save_model(self):
+        self.player_actor.save_weights('player_model.h5')
+    
     def run(self):
         global btn
         global my_action
+        global first
+        global bluff
         f = open("save", 'r')
         data = f.readlines()
         ai_fund = int(data[0])
@@ -819,18 +1247,30 @@ class Table(QThread):
         total_game = int(data[4])
         f.close()
         
+        
+        for i in range(45):
+            test = np.zeros(45).reshape(1, 45)
+            test[0][i] = 1
+            with self.graph.as_default():
+                print(self.player_actor.predict(test)[0], i)
+        
         while True:
             if ai_fund == 0:
                 ai_fund = 200000
             if player_fund == 0:
                 player_fund = 200000
+
             self.init_table.emit()
             deck = []
+            dic = {}
             
             generate_deck(deck)
-                
+        
+            for i in itertools.combinations(deck, 2):
+                dic[i] = 1
+            
             random.shuffle(deck)
-                
+            
             ai_hands = []
             ai_board = []
             
@@ -854,11 +1294,11 @@ class Table(QThread):
                 self.fund.emit(player_fund, ai_fund, table_stake)
                 
                 self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
-                self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                 while btn != True:
                     time.sleep(0.1)
                 btn = False
-                self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                 player_action = my_action
                 
                 self.ai_turn.emit(0)
@@ -870,166 +1310,186 @@ class Table(QThread):
                 player_board.append(player_hands.pop(player_action))
                 
                 print('turn2')
-                
+                turn = 0
+                player_action = 4
                 #turn2
                 for _ in range(2):
                     ai_board.append(deck.pop())
                     player_board.append(deck.pop())
-                    
+                
+                self.del_dic(dic, ai_hands + ai_board + player_board)
+                
                 self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                 self.card_range.emit(judge_demo(player_hands + player_board))
-                time.sleep(1)
+                #time.sleep(1)
                 
-                if check_turn(ai_board, player_board) == 1 and ai_fund > 0 and player_fund > 0:
+                if check_turn(ai_board, player_board) == 0 and ai_fund > 0 and player_fund > 0:
                     self.ai_turn.emit(0)
-                    #time.sleep(3)
-                    ai_action = self.choice(ai_hands, ai_board, player_board, 0)
+                    ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                     self.ai_turn.emit(1)
                      
                     stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
                     
-                    self.action_status.emit(1, ai_action, stake)
+                    self.action_status.emit(0, ai_action, stake, ai_fund)
                     if(ai_action == 2):
-                        winner = 2
+                        winner = 1
                         break
                     
                     self.fund.emit(player_fund, ai_fund, table_stake)
                     
                     self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                     self.bet_stake.emit(table_stake, stake)
-                    self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                     while btn != True:
                         time.sleep(0.1)
                     btn = False
-                    self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                     player_action = my_action
                     
+                    dic = self.add_dic(dic, player_board, table_stake, player_action)
+                    self.collect_sample(player_hands + player_board, table_stake, player_action)
+                    
                     stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                    self.action_status.emit(2, player_action, stake)
+                    self.action_status.emit(1, player_action, stake, player_fund)
                     if(player_action == 2):
-                        winner = 1
+                        winner = 0
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
                     
+                    self.ai_turn.emit(0)
+                    
                     if(player_action == 1):
                         self.ai_turn.emit(0)
-                        #time.sleep(3)   
-                        ai_action = self.choice(ai_hands, ai_board, player_board, 0)
+                        ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                         self.ai_turn.emit(1)
                         if ai_action == 1:
                             ai_action = 0
                          
                         stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
-                        self.action_status.emit(1, ai_action, stake)
+                        self.action_status.emit(0, ai_action, stake, ai_fund)
                         if(ai_action == 2):
-                            winner = 2
+                            winner = 1
                             break
                         self.fund.emit(player_fund, ai_fund, table_stake)
                         
-                elif(check_turn(ai_board, player_board) == 2 and ai_fund > 0 and player_fund > 0):
+                elif(check_turn(ai_board, player_board) == 1 and ai_fund > 0 and player_fund > 0):
                     
                     self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                     self.bet_stake.emit(table_stake, stake)
-                    self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                     while btn != True:
                         time.sleep(0.1)
                     btn = False
-                    self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                     player_action = my_action
+                    
+                    dic = self.add_dic(dic, player_board, table_stake, player_action)
+                    self.collect_sample(player_hands + player_board, table_stake, player_action)
+                    
                     stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                    self.action_status.emit(2, player_action, stake)
+                    self.action_status.emit(1, player_action, stake, player_fund)
                     if(player_action == 2):
-                        winner = 1
+                        winner = 0
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
                     
                     self.ai_turn.emit(0)
-                    #time.sleep(3)
-                    ai_action = self.choice(ai_hands, ai_board, player_board, 0)
+                    
+                    ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                     if ai_action == 1 and ai_fund < stake or player_fund == 0:
                         ai_action = 0
                     self.ai_turn.emit(1)
                      
                     stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
-                    self.action_status.emit(1, ai_action, stake)
+                    self.action_status.emit(0, ai_action, stake, ai_fund)
                     if(ai_action == 2):
-                        winner = 2
+                        winner = 1
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
                     
                     if(ai_action == 1):
                         self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                         self.bet_stake.emit(table_stake, stake)
-                        self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                        self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
+                        self.turn2_btn.emit()
                         while btn != True:
                             time.sleep(0.1)
                         btn = False
-                        self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                        self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                         player_action = my_action
+                        
+                        dic = self.add_dic(dic, player_board, table_stake, player_action)
+                        self.collect_sample(player_hands + player_board, table_stake, player_action)
+                        
                         stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                        self.action_status.emit(2, player_action, stake)
+                        self.action_status.emit(1, player_action, stake, player_fund)
                         if(player_action == 2):
-                            winner = 1
+                            winner = 0
                             break
                         self.fund.emit(player_fund, ai_fund, table_stake)
-                        
-                else:
-                    print("errrrrrrrrrrrrrrrrrrrrrrrrrrrror1")
-                    print(check_turn(ai_board, player_board))
-                    break
                 
                 print('turn3')
+                turn = 1
+                player_action = 4
                 #turn3
                 stake = 0
             
                 ai_board.append(deck.pop())
                 player_board.append(deck.pop())
                 
+                self.del_dic(dic, ai_hands + ai_board + player_board)
+                
                 self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                 self.card_range.emit(judge_demo(player_hands + player_board))
-                time.sleep(1)
+                #time.sleep(1)
                 
-                if(check_turn(ai_board, player_board) == 1 and ai_fund > 0 and player_fund > 0):
+                if(check_turn(ai_board, player_board) == 0 and ai_fund > 0 and player_fund > 0):
                     self.ai_turn.emit(0)
                     #time.sleep(3)
-                    ai_action = self.choice(ai_hands, ai_board, player_board, 1)
+                    ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                     self.ai_turn.emit(1)
                      
                     stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
-                    self.action_status.emit(1, ai_action, stake)
+                    self.action_status.emit(0, ai_action, stake, ai_fund)
                     if(ai_action == 2):
-                        winner = 2
+                        winner = 1
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
                     
                     self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                     self.bet_stake.emit(table_stake, stake)
-                    self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                     while btn != True:
                         time.sleep(0.1)
                     btn = False
-                    self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                     player_action = my_action
+                    
+                    dic = self.add_dic(dic, player_board, table_stake, player_action)
+                    self.collect_sample(player_hands + player_board, table_stake, player_action)
+                    
                     stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                    self.action_status.emit(2, player_action, stake)
+                    self.action_status.emit(1, player_action, stake, player_fund)
                     if(player_action == 2):
-                        winner = 1
+                        winner = 0
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
-            
+                    
+                    self.ai_turn.emit(0)
+                    
                     if player_action == 1:
                         while True:
                             self.ai_turn.emit(0)
                             #time.sleep(3)
-                            ai_action = self.choice(ai_hands, ai_board, player_board, 1)
+                            ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                             if ai_action == 1 and ai_fund < stake or player_fund == 0:
                                 ai_action = 0
                             self.ai_turn.emit(1)
                              
                             stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
-                            self.action_status.emit(1, ai_action, stake)
+                            self.action_status.emit(0, ai_action, stake, ai_fund)
                             if(ai_action == 2):
-                                winner = 2
+                                winner = 1
                                 break
                             self.fund.emit(player_fund, ai_fund, table_stake)
                             
@@ -1038,18 +1498,20 @@ class Table(QThread):
                             
                             self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                             self.bet_stake.emit(table_stake, stake)
-                            self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                            self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                             while btn != True:
                                 time.sleep(0.1)
                             btn = False
-                            self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                            self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                             player_action = my_action
-                            if(player_action == 1):
-                                player_action = 0
+                            
+                            dic = self.add_dic(dic, player_board, table_stake, player_action)
+                            self.collect_sample(player_hands + player_board, table_stake, player_action)
+                            
                             stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                            self.action_status.emit(2, player_action, stake)
+                            self.action_status.emit(1, player_action, stake, player_fund)
                             if(player_action == 2):
-                                winner = 1
+                                winner = 0
                                 break
                             self.fund.emit(player_fund, ai_fund, table_stake)
                             
@@ -1057,33 +1519,37 @@ class Table(QThread):
                                 break
                         
                 
-                elif check_turn(ai_board, player_board) == 2 and ai_fund > 0 and player_fund > 0:
+                elif check_turn(ai_board, player_board) == 1 and ai_fund > 0 and player_fund > 0:
                     self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                     self.bet_stake.emit(table_stake, stake)
-                    self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                     while btn != True:
                         time.sleep(0.1)
                     btn = False
-                    self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                     player_action = my_action
+                    
+                    dic = self.add_dic(dic, player_board, table_stake, player_action)
+                    self.collect_sample(player_hands + player_board, table_stake, player_action)
+                    
                     stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                    self.action_status.emit(2, player_action, stake)
+                    self.action_status.emit(1, player_action, stake, player_fund)
                     if(player_action == 2):
-                        winner = 1
+                        winner = 0
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
                     
                     self.ai_turn.emit(0)
-                    #time.sleep(3)
-                    ai_action = self.choice(ai_hands, ai_board, player_board, 1)
+                    
+                    ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                     if ai_action == 1 and ai_fund < stake or player_fund == 0:
                         ai_action = 0
                     self.ai_turn.emit(1)
                      
                     stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
-                    self.action_status.emit(1, ai_action, stake)
+                    self.action_status.emit(0, ai_action, stake, ai_fund)
                     if(ai_action == 2):
-                        winner = 2
+                        winner = 1
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
                     
@@ -1091,18 +1557,20 @@ class Table(QThread):
                         while True:
                             self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                             self.bet_stake.emit(table_stake, stake)
-                            self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                            self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                             while btn != True:
                                 time.sleep(0.1)
                             btn = False
-                            self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                            self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                             player_action = my_action
-                            if(player_action == 1):
-                                player_action = 0
+                            
+                            dic = self.add_dic(dic, player_board, table_stake, player_action)
+                            self.collect_sample(player_hands + player_board, table_stake, player_action)
+                            
                             stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                            self.action_status.emit(2, player_action, stake)
+                            self.action_status.emit(1, player_action, stake, player_fund)
                             if(player_action == 2):
-                                winner = 1
+                                winner = 0
                                 break
                             self.fund.emit(player_fund, ai_fund, table_stake)
                             
@@ -1111,66 +1579,69 @@ class Table(QThread):
                             
                             self.ai_turn.emit(0)
                             #time.sleep(3)
-                            ai_action = self.choice(ai_hands, ai_board, player_board, 1)
+                            ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                             if ai_action == 1 and ai_fund < stake or player_fund == 0:
                                 ai_action = 0
                             self.ai_turn.emit(1)
                              
                             stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
-                            self.action_status.emit(1, ai_action, stake)
+                            self.action_status.emit(0, ai_action, stake, ai_fund)
                             if(ai_action == 2):
-                                winner = 2
+                                winner = 1
                                 break
                             self.fund.emit(player_fund, ai_fund, table_stake)
                             
                             if(ai_action == 0):
                                 break
-                        
-                else:
-                    print("errrrrrrrrrrrrrrrrrrrrrrrrrrrror2")
-                    print(check_turn(ai_board, player_board))
-                    break
+                            
                     
                 if(winner != 0):
                     break
                 
                 print('final')
+                turn = 2
+                player_action = 4
                 #final
                 stake = 0
                 
                 ai_hands.append(deck.pop())
                 player_hands.append(deck.pop())
                 
+                self.del_dic(dic, ai_hands + ai_board + player_board)
+                
                 self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                 self.card_range.emit(judge_demo(player_hands + player_board))
-                time.sleep(1)
+                #time.sleep(1)
                 
-                if(check_turn(ai_board, player_board) == 1 and ai_fund > 0 and player_fund > 0):
+                if(check_turn(ai_board, player_board) == 0 and ai_fund > 0 and player_fund > 0):
                     self.ai_turn.emit(0)
                     #time.sleep(3)
-                    ai_action = self.choice(ai_hands, ai_board, player_board, 2)
+                    ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                     self.ai_turn.emit(1)
                     
                     stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
-                    self.action_status.emit(1, ai_action, stake)
+                    self.action_status.emit(0, ai_action, stake, ai_fund)
                     if(ai_action == 2):
-                        winner = 2
+                        winner = 1
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
                     
                     self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                     self.bet_stake.emit(table_stake, stake)
-                    self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                     while btn != True:
                         time.sleep(0.1)
                     btn = False
-                    self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                     player_action = my_action
                     
+                    dic = self.add_dic(dic, player_board, table_stake, player_action)
+                    self.collect_sample(player_hands + player_board, table_stake, player_action)
+                    
                     stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                    self.action_status.emit(2, player_action, stake)
+                    self.action_status.emit(1, player_action, stake, player_fund)
                     if(player_action == 2):
-                        winner = 1
+                        winner = 0
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
                     
@@ -1178,15 +1649,15 @@ class Table(QThread):
                         while True:
                             self.ai_turn.emit(0)
                             #time.sleep(3)
-                            ai_action = self.choice(ai_hands, ai_board, player_board, 2)
+                            ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                             if ai_action == 1 and ai_fund < stake or player_fund == 0:
                                 ai_action = 0
                             self.ai_turn.emit(1)
                              
                             stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
-                            self.action_status.emit(1, ai_action, stake)
+                            self.action_status.emit(0, ai_action, stake, ai_fund)
                             if(ai_action == 2):
-                                winner = 2
+                                winner = 1
                                 break
                             self.fund.emit(player_fund, ai_fund, table_stake)
                             
@@ -1195,54 +1666,58 @@ class Table(QThread):
                             
                             self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                             self.bet_stake.emit(table_stake, stake)
-                            self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                            self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                             while btn != True:
                                 time.sleep(0.1)
                             btn = False
-                            self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                            self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                             player_action = my_action
                             
-                            if(player_action == 1):
-                                player_action = 0
+                            dic = self.add_dic(dic, player_board, table_stake, player_action)
+                            self.collect_sample(player_hands + player_board, table_stake, player_action)
+                            
                             stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                            self.action_status.emit(2, player_action, stake)
+                            self.action_status.emit(1, player_action, stake, player_fund)
                             if(player_action == 2):
-                                winner = 1
+                                winner = 0
                                 break
                             self.fund.emit(player_fund, ai_fund, table_stake)
                             
                             if(player_action == 0):
                                 break
                 
-                elif check_turn(ai_board, player_board) == 2 and ai_fund > 0 and player_fund > 0:
+                elif check_turn(ai_board, player_board) == 1 and ai_fund > 0 and player_fund > 0:
                     
                     self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                     self.bet_stake.emit(table_stake, stake)
-                    self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                     while btn != True:
                         time.sleep(0.1)
                     btn = False
-                    self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                    self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                     player_action = my_action
                     
+                    dic = self.add_dic(dic, player_board, table_stake, player_action)
+                    self.collect_sample(player_hands + player_board, table_stake, player_action)
+                    
                     stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                    self.action_status.emit(2, player_action, stake)
+                    self.action_status.emit(1, player_action, stake, player_fund)
                     if(player_action == 2):
-                        winner = 1
+                        winner = 0
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
                       
                     self.ai_turn.emit(0)
                     #time.sleep(3)    
-                    ai_action = self.choice(ai_hands, ai_board, player_board, 2)
+                    ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                     if ai_action == 1 and ai_fund < stake or player_fund == 0:
                         ai_action = 0
                     self.ai_turn.emit(1)
                      
                     stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
-                    self.action_status.emit(1, ai_action, stake)
+                    self.action_status.emit(0, ai_action, stake, ai_fund)
                     if(ai_action == 2):
-                        winner = 2
+                        winner = 1
                         break
                     self.fund.emit(player_fund, ai_fund, table_stake)
                     
@@ -1250,19 +1725,20 @@ class Table(QThread):
                         while True:
                             self.cards_status.emit(player_hands, player_board, ai_hands, ai_board)
                             self.bet_stake.emit(table_stake, stake)
-                            self.btn_status.emit(True, player_fund < stake, ai_fund == 0)
+                            self.btn_status.emit(True, player_fund, stake, ai_fund == 0, table_stake)
                             while btn != True:
                                 time.sleep(0.1)
                             btn = False
-                            self.btn_status.emit(False, player_fund < stake, ai_fund == 0)
+                            self.btn_status.emit(False, player_fund, stake, ai_fund == 0, table_stake)
                             player_action = my_action
                             
-                            if(player_action == 1):
-                                player_action = 0
+                            dic = self.add_dic(dic, player_board, table_stake, player_action)
+                            self.collect_sample(player_hands + player_board, table_stake, player_action)
+                            
                             stake, table_stake, ai_fund, player_fund= bet(player_action, stake, table_stake, -1, [ai_fund, player_fund])
-                            self.action_status.emit(2, player_action, stake)
+                            self.action_status.emit(1, player_action, stake, player_fund)
                             if(player_action == 2):
-                                winner = 1
+                                winner = 0
                                 break
                             self.fund.emit(player_fund, ai_fund, table_stake)
                             
@@ -1271,35 +1747,36 @@ class Table(QThread):
                             
                             self.ai_turn.emit(0)
                             #time.sleep(3)
-                            ai_action = self.choice(ai_hands, ai_board, player_board, 2)
+                            ai_action = self.choice(ai_hands + ai_board, player_board, player_action, player_fund, ai_fund, table_stake, stake, dic, turn)
                             if ai_action == 1 and ai_fund < stake or player_fund == 0:
                                 ai_action = 0
                             self.ai_turn.emit(1)
                              
                             stake, table_stake, ai_fund, player_fund = bet(ai_action, stake, table_stake, 0, [ai_fund, player_fund])
-                            self.action_status.emit(1, ai_action, stake)
+                            self.action_status.emit(0, ai_action, stake, ai_fund)
                             if(ai_action == 2):
-                                winner = 2
+                                winner = 1
                                 break
                             self.fund.emit(player_fund, ai_fund, table_stake)
                             
                             if(ai_action == 0):
                                 break
-                            
-                else:
-                    print("errrrrrrrrrrrrrrrrrrrrrrrrrrrror3")
-                    print(check_turn(ai_board, player_board))
-                    break
                 
                 if(winner == 0):
                     winner = judge_end(ai_hands + ai_board, player_hands + player_board)
                     
                 break
             
+            if player_action == 2 or ai_action == 2:
+                self.train(True)
+            else:
+                self.train(False)
+            self.save_model()
+            
             if winner == 0:
                 ai_fund += table_stake
                 ai_win += 1
-            elif winner == -1:
+            elif winner == 1:
                 player_fund += table_stake
                 player_win += 1
             total_game += 1
@@ -1310,7 +1787,7 @@ class Table(QThread):
             f.close()
             if winner == 0:
                 self.ai_turn.emit(2)
-            elif winner == -1:
+            elif winner == 1:
                 self.ai_turn.emit(3)
             
             self.end.emit(player_hands, player_board, ai_hands, ai_board)
@@ -1320,245 +1797,12 @@ class Table(QThread):
             while btn != True:
                     time.sleep(0.1)
             btn = False
-                
-        
-    def choice(self, ai_hands, ai_board, player_board, turn):
-        calc_deck = []
-        player_hands = [0, 0]
-        result = np.zeros(2)
-        case_number = 0
-        
-        generate_deck(calc_deck)
-        
-        for i in (ai_hands + ai_board + player_board):
-            calc_deck.remove(i)
-        
-        if turn <= 1:
-            for i in itertools.combinations(calc_deck, 2):
-                #player_hands.append(i[0])
-                #player_hands.append(i[1])
-                player_hands[0] = i[0]
-                player_hands[1] = i[1]
-                
-                winner, ai_range = judge_state(ai_hands + ai_board, player_hands + player_board)
-                
-                if ai_range[winner][0] <= 2:
-                    ai_state = self.preprocess(winner, ai_range, ai_hands + ai_board, player_hands + player_board, turn)
-                    
-                    if type(ai_state) == np.ndarray:
-                        with self.graph.as_default():
-                            result += self.actor_model[turn].predict(ai_state)[0]
-                            print(self.actor_model[turn].predict(ai_state)[0])
-                else:
-                    result[winner] += 1
-                    
-                case_number += 1
-                #player_hands.clear()
-                    
-        elif turn == 2:
-            player_hands = [0, 0, 0]
-            sub_calc_deck = deepcopy(calc_deck)
-            for i in itertools.combinations(calc_deck, 2):
-                #player_hands.append(i[0])
-                #player_hands.append(i[1])
-                #player_hands.append(i[2])
-                player_hands[0] = i[0]
-                player_hands[1] = i[1]
-                sub_calc_deck.remove(i[0])
-                sub_calc_deck.remove(i[1])
-                
-                for j in sub_calc_deck:
-                    player_hands[2] = j
-                    result[judge_end(ai_hands + ai_board, player_hands + player_board)] += 1
-                    case_number += 1
-                    
-                sub_calc_deck.append(i[0])
-                sub_calc_deck.append(i[1])
-                #player_hands.clear()
-
-        print(case_number)
-        for i in range(2):
-            result[i] /= case_number
-        result /= result.sum()
-        print(result)
-        if result[0] >= 0.6:
-            return 1
-        #elif result[0] > 0.4 and result[0] < 0.6:
-        #emotion    
-        elif result[0] > 0.2 and result[0] < 0.6:
-            return 0
-        elif  result[0] <= 0.2:
-            return 2
-                
-    def preprocess(self, winner, range, ai_card, player_card, turn):
-        count = 0
-        count2 = 0
-        
-        if range[winner][0] > 2:
-            return False
-        
-        if turn == 0:
-            ai_state = np.zeros(98)
             
-            if range[0][0] == 0 and range[1][0] == 0:
-                for i in ai_card:
-                    for j in player_card:
-                        if i.value > j.value:
-                            count += 1
-                ai_state[count] = 1
                 
-            elif range[0][0] == 0 and range[1][0] == 1:
-                for i in ai_card:
-                    if i.value > range[1][1]:
-                        count += 1
-                ai_state[count + 31] = 1
-            
-            elif range[0][0] == 0 and range[1][0] == 2:
-                for i in ai_card:
-                    if i.value > range[1][1]:
-                        count += 1
-                ai_state[count + 37] = 1   
-            
-            elif range[0][0] == 1 and range[1][0] == 0:
-                for i in player_card:
-                    if i.value > range[0][1]:
-                        count += 1
-                ai_state[count + 43] = 1
-                
-            elif range[0][0] == 1 and range[1][0] == 1:
-                if winner == 0:
-                    for i in player_card:
-                        if i.value > range[0][1]:
-                            count2 += 1
-                            for j in ai_card:
-                                if j.value > range[0][1]:
-                                    if i.value < j.value:
-                                        count += 1
-                    if count2 == 0:
-                        ai_state[49] = 1
-                    elif count2 == 1:
-                        ai_state[count + 50] = 1
-                    elif count2 == 2:
-                        ai_state[count + 54] = 1
-                    elif count2 ==  3:
-                        ai_state[count + 61] = 1
-                        
-                elif winner == -1:
-                    for i in ai_card:
-                        if i.value > range[1][1]:
-                            count2 += 1
-                            for j in player_card:
-                                if j.value > range[1][1]:
-                                    if i.value < j.value:
-                                        count += 1
-                    if count2 == 0:
-                        ai_state[71] = 1
-                    elif count2 == 1:
-                        ai_state[count + 72] = 1
-                    elif count2 == 2:
-                        ai_state[count + 76] = 1
-                    elif count2 ==  3:
-                        ai_state[count + 83] = 1
-                
-            elif range[0][0] == 1 and range[1][0] == 2:
-                if range[0][1] > range[1][1]:
-                    ai_state[93] = 1
-                elif range[0][1] <= range[1][1]:
-                    for i in ai_card:
-                        if i.value > range[0][1]:
-                            if i.value > range[1][1]:
-                                count += 1
-                    ai_state[count + 94] = 1
-            else:
-                return False
-            
-            return np.reshape(ai_state, (1, 98))
-                        
-                        
-        elif turn == 1:
-            ai_state = np.zeros(144)
-            
-            if range[0][0] == 0 and range[1][0] == 0:
-                for i in ai_card:
-                    for j in player_card:
-                        if i.value > j.value:
-                            count += 1
-                ai_state[count] = 1
-                
-            elif range[0][0] == 0 and range[1][0] == 1:
-                for i in ai_card:
-                    if i.value > range[1][1]:
-                        count += 1
-                if count == 0:
-                    return False
-                ai_state[count + 37 - 1] = 1
-            
-            elif range[0][0] == 1 and range[1][0] == 0:
-                for i in player_card:
-                    if i.value > range[0][1]:
-                        count += 1
-                if count == 0:
-                    return False
-                ai_state[count + 43 - 1] = 1
-            
-            elif range[0][0] == 1 and range[1][0] == 1:
-                if winner == 0:
-                    for i in player_card:
-                        if i.value > range[0][1]:
-                            count2 += 1
-                            for j in ai_card:
-                                if j.value > range[0][1]:
-                                    if i.value < j.value:
-                                        count += 1
-                    if count2 == 0:
-                        ai_state[49] = 1
-                    elif count2 == 1:
-                        ai_state[count + 50] = 1
-                    elif count2 == 2:
-                        ai_state[count + 55] = 1
-                    elif count2 ==  3:
-                        ai_state[count + 64] = 1
-                    elif count2 ==  4:
-                        ai_state[count + 77] = 1
-                        
-                elif winner == -1:
-                    for i in ai_card:
-                        if i.value > range[1][1]:
-                            count2 += 1
-                            for j in player_card:
-                                if j.value > range[1][1]:
-                                    if i.value < j.value:
-                                        count += 1
-                    if count2 == 0:
-                        ai_state[94] = 1
-                    elif count2 == 1:
-                        ai_state[count + 95] = 1
-                    elif count2 == 2:
-                        ai_state[count + 100] = 1
-                    elif count2 ==  3:
-                        ai_state[count + 109] = 1
-                    elif count2 ==  4:
-                        ai_state[count + 122] = 1
-                    
-            elif range[0][0] == 1 and range[1][0] == 2:
-                if range[0][1] > range[1][1]:
-                    ai_state[139] = 1
-                elif range[0][1] <= range[1][1]:
-                    for i in ai_card:
-                        if i.value != range[0][1]:
-                            if i.value > range[1][1]:
-                                count += 1
-                    if count == 0:
-                        return False
-                    ai_state[count + 140 - 1] = 1
-            else:
-                return False
-                        
-            return np.reshape(ai_state, (1, 144))
     
+        
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     myWindow = MyWindow()
     myWindow.show()
     app.exec_()
-    
