@@ -117,6 +117,11 @@ while (1):
             x, y, w, h = faces[0]
 
             TrackingROI = (x, y, w, h)
+            col = x
+            row = y
+            height = abs(row - y)
+            width = abs(col -x)
+
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 3, 4, 0)
 
             TrackingState = TRACKING_STATE_INIT
@@ -148,8 +153,9 @@ while (1):
 
 
             trackWindow = (x, y, w, h)
-
-            roi = frame[x:x + h, y:y + w]
+            ##trackWindow = (col, row, width, height)
+            roi = frame[y:y + h, x:x + w]
+            ##roi = frame[row:row + height, col:col + width]
             roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
             roi_hist = cv2.calcHist([roi], [0], None, [180], [0, 180])
             cv2.normalize(roi_hist, roi_hist, 0, 255, cv2.NORM_MINMAX)
@@ -228,10 +234,10 @@ while (1):
             surprise_a = emotion_a['surprise']
 
 
-            height = fac.pop['height']
-            width = fac.pop['width']
-            col = fac.pop['left']
-            row = fac.pop['top']
+          ##  height = fac.pop['height']
+           ## width = fac.pop['width']
+            ##col = fac.pop['left']
+            ##row = fac.pop['top']
 
 
         except Exception as e:
