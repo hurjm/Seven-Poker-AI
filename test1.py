@@ -1,10 +1,7 @@
 # -*- conding: utf-8 -*-
 import http.client, urllib.request, urllib.parse, urllib.error, base64, requests, json, cv2, time
 import numpy as np
-from fileinput import filename
-import dis
-from socket import *
-import simplejson
+
 
 subscription_key = '79bdaf61a968450caaac4cd3005bb16a'
 
@@ -85,7 +82,7 @@ if __name__ == '__main__':
     TrackingState = 0
 
     TrackingROI = (0, 0, 0, 0)
-
+    trackWindow = (0, 0, 0, 0)
 
 while (1):
     term_crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
@@ -202,7 +199,7 @@ while (1):
 
     if (count % 50 == 0):
         body = ""
-        filename = ('C:/image/test2/image%d.PNG' % 0)
+        filename = ('C:/image/test3/image%d.PNG' % 0)
 
         f = open(filename, "rb")
         body = f.read()
