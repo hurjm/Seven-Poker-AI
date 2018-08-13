@@ -19,6 +19,7 @@ params = {
 }
 
 count = 0
+ccount = 0
 CAM_ID = 0
 
 anger_a = 0
@@ -32,8 +33,6 @@ surprise_a = 0
 
 trackWindow = None
 roi_hist = None
-
-
 
 capture = cv2.VideoCapture(CAM_ID)
 
@@ -76,8 +75,8 @@ if __name__ == '__main__':
 
     face_cascade = cv2.CascadeClassifier()
 
-    face_cascade.load('C:/opencv/opencv/sources/data/haarcascades/haarcascade_frontalface_default.xml')
-    ##face_cascade.load('C:/image/test2/cascade2.xml')
+    face_cascade.load('C:/image/test3//haarcascade_frontalface_default.xml')
+   ## face_cascade.load('C:/image/test3/cascade2.xml')
 
     TrackingState = 0
 
@@ -145,8 +144,9 @@ while (1):
             p2 = (int(TrackingROI[0] + TrackingROI[2]), int(TrackingROI[1] + TrackingROI[3]))
 
             cv2.rectangle(frame, p1, p2, (0, 0, 255), 1, 1)
-            print('face x %d ' % (int(TrackingROI[0])) + 'y %d ' % (int(TrackingROI[1])) +
-                  'w %d ' % (int(TrackingROI[2])) + 'h %d ' % (int(TrackingROI[3])))
+            cv2.putText(frame, 'Dected Face', (int(TrackingROI[0])-5,int(TrackingROI[1])-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,0), 2)
+
+            print('face x %d ' % (int(TrackingROI[0])) + 'y %d ' % (int(TrackingROI[1])) + 'w %d ' % (int(TrackingROI[2])) + 'h %d ' % (int(TrackingROI[3])))
 
 
             trackWindow = (x, y, w, h)
@@ -168,7 +168,6 @@ while (1):
 
         else:
             print('Tracking failed')
-            ccount = ccount + 1
 
             TrackingState = TRACKING_STATE_CHECK
 
@@ -206,8 +205,6 @@ while (1):
         f.close
 
         try:
-
-
             response= requests.post(uri_base, data=body, headers=headers, params=params)
 
 
